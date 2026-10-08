@@ -5,12 +5,17 @@ from django.contrib.auth import login, logout
 from django.contrib.auth.decorators import login_required
 from django.core.cache import cache
 from django.http import Http404
+from django.views.decorators.csrf import csrf_exempt
+from django.db import transaction
+from decimal import Decimal
+import uuid
 from django.shortcuts import redirect, render
 from django.views.decorators.http import require_POST
 
 from accounts import services as acc
 from . import services
-from .models import ApiKey, Domain, Mailbox, UpgradeRequest
+from . import iyzico
+from .models import ApiKey, Domain, Mailbox, Order, UpgradeRequest
 
 CONNECT = {"host": settings.MX_TARGET, "imap_port": 993, "smtp_port": 587}
 
@@ -290,3 +295,93 @@ def upgrade(request):
     return render(request, "panel/upgrade.html", {
         "plan": _plan(request), "reqs": UpgradeRequest.objects.filter(user=request.user).order_by("-id")[:10],
         "kind": request.GET.get("kind", "mailboxes")})
+
+
+# ---------- Pro plan satın alma ----------
+def _payments_ready():
+    return settings.PAYMENTS_ENABLED and iyzico.configured() and services.pro_plan() is not None
+
+
+@login_required
+def billing(request):
+    plan, pro = _plan(request), services.pro_plan()
+    if plan is None:
+        return render(request, "panel/blocked.html")
+    if request.method == "POST":
+        if not _payments_ready():
+            messages.error(request, "Online payment is not open yet. Use \"More capacity\" and we will send you a written offer.")
+            return redirect("panel-upgrade")
+        f = request.POST
+        name, country, address = f.get("name", "").strip(), f.get("country", "").strip(), f.get("address", "").strip()
+        if _throttled(request, "billing", 10):
+            messages.error(request, "Too many attempts. Try again later.")
+        elif not (name and country and address):
+            messages.error(request, "Full name, country and billing address are required for the invoice.")
+        elif f.get("buyer_type") not in ("business", "consumer"):
+            messages.error(request, "Please tell us whether you are buying for business or as a consumer.")
+        elif f.get("accept") != "on":
+            messages.error(request, "Please confirm that you have read and accept the sales terms.")
+        else:
+            order = Order.objects.create(
+                user=request.user, plan=pro, amount_usd=Decimal(pro.price_usd_yearly), conversation_id="posta-" + uuid.uuid4().hex,
+                buyer_name=name[:240], buyer_country=country[:80], buyer_address=address[:300],
+                buyer_tax_id=f.get("tax_id", "").strip()[:40], terms_version=acc.TERMS_VERSION, sales_version=acc.TERMS_VERSION,
+                buyer_type=f["buyer_type"], accept_ip=(_ip(request) or None))
+            first, _, last = name.partition(" ")
+            payload = iyzico.build_payload(
+                conversation_id=order.conversation_id, basket_id=f"pro-{order.id}", price=order.amount_usd, currency=order.currency,
+                callback_url=settings.IYZICO_CALLBACK_URL, item_name="posta Pro (1 year)",
+                buyer={"id": f"u{request.user.id}", "name": first, "surname": last or first, "email": request.user.email,
+                       "address": address, "country": country, "city": country, "ip": _ip(request)})
+            try:
+                data = iyzico.initialize(payload)
+                if not iyzico.verify_initialize(data) or not data.get("paymentPageUrl"):
+                    raise iyzico.IyzicoError("bad initialize response", "bad_signature")
+                order.iyzico_token = data.get("token", "")
+                order.save(update_fields=["iyzico_token"])
+                return redirect(data["paymentPageUrl"])
+            except iyzico.IyzicoError as e:
+                order.status, order.error = Order.FAILED, str(e)[:256]
+                order.save(update_fields=["status", "error"])
+                messages.error(request, "We could not start the payment. Nothing was charged. Try again or write to merhaba@preved.co.")
+    result = request.GET.get("r")
+    if result == "ok":
+        messages.success(request, "Payment received. Your Pro plan is active.")
+    elif result == "failed":
+        messages.error(request, "The payment was not completed. Nothing was charged.")
+    from .models import Membership
+    m = Membership.objects.filter(user=request.user).first()
+    return render(request, "panel/billing.html", {
+        "plan": plan, "pro": pro, "ready": _payments_ready(), "membership": m, "sales_version": acc.TERMS_VERSION,
+        "is_pro": bool(pro and plan.pk == pro.pk), "orders": Order.objects.filter(user=request.user, status=Order.PAID).order_by("-id")[:10]})
+
+
+@csrf_exempt
+def billing_callback(request):
+    """iyzico buraya (çoğunlukla çapraz-site POST, oturum çerezi gelmeyebilir) token ile döner. Doğruluk kaynağı: imzalı retrieve."""
+    token = request.POST.get("token") or request.GET.get("token") or ""
+    if not token:
+        return redirect("/app/billing/?r=failed")
+    try:
+        detail = iyzico.retrieve(token)
+    except iyzico.IyzicoError:
+        return redirect("/app/billing/?r=failed")
+    ok, errs, order = False, [], None
+    with transaction.atomic():
+        order = Order.objects.select_for_update().filter(iyzico_token=token).first()
+        if not order:
+            return redirect("/app/billing/?r=failed")
+        if order.status != Order.PENDING:
+            return redirect("/app/billing/?r=" + ("ok" if order.status == Order.PAID else "failed"))
+        ok = services.finish_order(order, detail)
+        if ok:
+            errs = services.activate_pro(order)
+    if ok:
+        services.notify_operator(f"ÖDEME ALINDI: {order.user.email}", f"Pro (1 yıl) ${order.amount_usd} — sipariş #{order.id}, iyzico paymentId {order.iyzico_payment_id}, {order.buyer_type}. "
+                f"Fatura bilgisi: {order.buyer_name}, {order.buyer_country}, {order.buyer_address}, vergi no: {order.buyer_tax_id or '-'}. E-Arşiv faturasını 7 gün içinde kes."
+                + (f" UYARI: Mailcow limit hatası: {errs}" if errs else ""))
+        services.send_receipt(order)
+    elif order and order.status == Order.REVIEW:
+        services.notify_operator(f"⚠ ÖDEME İNCELEME GEREKİR: sipariş #{order.id}", f"{order.user.email}: iyzico SUCCESS döndü ama doğrulama tutmadı (imza/tutar/para birimi). "
+                f"Para alınmış olabilir. iyzico panelinde paymentId {order.iyzico_payment_id} kontrol et; doğruysa: manage.py confirm_order {order.id}")
+    return redirect("/app/billing/?r=" + ("ok" if ok else "failed"))

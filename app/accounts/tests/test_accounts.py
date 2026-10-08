@@ -62,6 +62,15 @@ class AccountFlow(APITestCase):
         self.assertEqual(self.reg(ver="1999-01-01").json()["error"]["code"], "terms_required")
         self.assertEqual(self.reg(pw="short").json()["error"]["code"], "weak_password")
         self.assertEqual(self.reg(email="nope").json()["error"]["code"], "invalid_email")
+        self.assertEqual(self.reg(email="jakob@jamba").json()["error"]["code"], "invalid_email")  # TLD yok
+
+    @override_settings(NOTIFY_EMAIL="ops@example.net")
+    def test_operator_notified_on_signup(self):
+        with self.captureOnCommitCallbacks(execute=True):
+            self.reg()
+        to_ops = [m for m in mail.outbox if m.to == ["ops@example.net"]]
+        self.assertEqual(len(to_ops), 1)
+        self.assertIn("yeni kayıt", to_ops[0].subject)
 
     def test_login_requires_verified_email(self):
         self.reg()

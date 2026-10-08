@@ -1,0 +1,28 @@
+{% extends "panel/base.html" %}{% block title %}Pro plan{% endblock %}
+{% block content %}
+<h1>Pro plan</h1>
+{% if is_pro %}
+<div class="card"><strong>Your Pro plan is active.</strong> <span class="muted">Valid until {{ membership.paid_until|date:"Y-m-d" }}. Paying again adds one year to that date.</span></div>
+{% endif %}
+<div class="card"><strong>Pro: 1 domain, 10 mailboxes, ${{ pro.price_usd_yearly }} a year.</strong>
+<p class="muted small">Each mailbox has {{ pro.mailbox_quota_mb }} MB and up to {{ pro.daily_send_limit }} outgoing messages a day. Bulk and marketing mail is not allowed. Paid once with a card through iyzico. posta never sees your card number.</p></div>
+{% if ready and pro %}
+<form method="post" class="card">{% csrf_token %}
+<div class="card"><strong>Order summary.</strong> Pro, 1 year, USD {{ pro.price_usd_yearly }} total, no automatic renewal. 14-day full refund; consumers can cancel any time and get back the unused part. <a href="/sales/{{ sales_version }}" target="_blank" rel="noopener">Sales terms</a></div>
+<label for="name">Full name (or company)</label><input id="name" name="name" maxlength="240" required>
+<label for="country">Country</label><input id="country" name="country" maxlength="80" required>
+<label for="address">Billing address</label><textarea id="address" name="address" rows="3" maxlength="300" required></textarea>
+<label for="tax_id">Tax / VAT number <span class="muted small">(optional)</span></label><input id="tax_id" name="tax_id" maxlength="40">
+<fieldset><legend class="small muted">I am buying</legend>
+<p><label><input type="radio" name="buyer_type" value="business" required> for my trade, business or profession</label><br>
+<label><input type="radio" name="buyer_type" value="consumer"> as a consumer (private use)</label></p></fieldset>
+<p><label><input type="checkbox" name="accept" required> I have read the <a href="/sales/{{ sales_version }}" target="_blank" rel="noopener">pre-contract information and the sales terms</a> (version {{ sales_version }}) and the <a href="/terms/{{ sales_version }}" target="_blank" rel="noopener">Terms of Service</a>, and I accept them.</label></p>
+<p class="small muted">How we use your billing details: <a href="/privacy" target="_blank" rel="noopener">Privacy notice</a>.</p>
+<p class="small">By clicking the button you place your order and agree to pay USD {{ pro.price_usd_yearly }}.</p>
+<p><button class="btn" type="submit">Order and pay USD {{ pro.price_usd_yearly }}</button></p>
+<p class="muted small">You will be taken to iyzico's secure payment page.</p></form>
+{% else %}
+<div class="card"><strong>Online payment is opening soon.</strong> <span class="muted">Until then, <a href="{% url 'panel-upgrade' %}">ask for more capacity</a> and we will send you a written offer.</span></div>
+{% endif %}
+{% if orders %}<h2>Payments</h2>{% for o in orders %}<div class="card row"><span>Pro, 1 year, ${{ o.amount_usd }}</span><span class="small muted">{{ o.paid_at|date:"Y-m-d" }} · order #{{ o.id }}</span></div>{% endfor %}{% endif %}
+{% endblock %}

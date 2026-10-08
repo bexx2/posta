@@ -10,3 +10,4 @@ class MailBackend:
     def add_mailbox(self, address: str, password: str, quota_mb: int, send_per_day: int) -> None: raise NotImplementedError
     def delete_mailbox(self, address: str) -> None: raise NotImplementedError
     def set_suspended(self, address: str, suspended: bool) -> None: raise NotImplementedError
+    def set_domain_limits(self, domain: str, max_mailboxes: int, quota_mb: int) -> None: raise NotImplementedError

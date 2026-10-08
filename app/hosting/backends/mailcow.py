@@ -66,3 +66,7 @@ class MailcowBackend(MailBackend):
 
     def set_suspended(self, address, suspended):
         self._call("POST", "edit/mailbox", {"items": [address], "attr": {"active": "0" if suspended else "1"}})
+
+    def set_domain_limits(self, domain, max_mailboxes, quota_mb):
+        self._call("POST", "edit/domain", {"items": [domain], "attr": {
+            "mailboxes": str(max_mailboxes), "defquota": str(quota_mb), "maxquota": str(quota_mb), "quota": str(quota_mb * max_mailboxes)}})

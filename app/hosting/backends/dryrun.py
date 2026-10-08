@@ -35,3 +35,6 @@ class DryRunBackend(MailBackend):
 
     def set_suspended(self, address, suspended):
         self.ops.append(("set_suspended", address, suspended))
+
+    def set_domain_limits(self, domain, max_mailboxes, quota_mb):
+        self.ops.append(("set_domain_limits", domain, max_mailboxes, quota_mb))

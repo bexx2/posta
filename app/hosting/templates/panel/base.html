@@ -64,6 +64,7 @@ footer{color:var(--muted);font-size:.85rem;padding:0 0 40px}
   <nav aria-label="Main">
     <a href="{% url 'panel-home' %}">Dashboard</a>
     <a href="{% url 'panel-keys' %}">API keys</a>
+    <a href="{% url 'panel-billing' %}">Pro plan</a>
     <a href="{% url 'panel-upgrade' %}">More capacity</a>
     <form method="post" action="{% url 'panel-logout' %}" style="display:inline">{% csrf_token %}<button type="submit">Sign out</button></form>
   </nav>

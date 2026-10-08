@@ -204,3 +204,127 @@ def request_upgrade(user, kind: str, quantity, note: str = ""):
     req = UpgradeRequest.objects.create(user=user, kind=kind, quantity=qty, note=(note or "").strip()[:500])
     audit(user, "upgrade.request", "upgrade", str(req.pk), kind=kind, quantity=qty)
     return req
+
+
+# ---------- Pro plan satın alma (iyzico) ----------
+PRO_SLUG = "pro"
+PRO_DAYS = 365
+
+
+def pro_plan():
+    from .models import Plan
+    return Plan.objects.filter(slug=PRO_SLUG, price_usd_yearly__isnull=False).first()
+
+
+def activate_pro(order):
+    """Ödenmiş siparişi uygular: plan=pro, süre +365 gün (aktif Pro varsa bitişine eklenir), Mailcow alan adı limitleri yükselir. Idempotent çağıran: Order.status."""
+    from datetime import timedelta
+    from django.utils import timezone
+    m = membership(order.user)
+    base = m.paid_until if (m.paid_until and m.paid_until > timezone.now() and m.plan_id == order.plan_id) else timezone.now()
+    m.plan, m.paid_until = order.plan, base + timedelta(days=PRO_DAYS)
+    m.save(update_fields=["plan", "paid_until"])
+    errs = []
+    for d in Domain.objects.filter(owner=order.user).exclude(status=Domain.SUSPENDED):
+        try:
+            get_backend().set_domain_limits(d.name, order.plan.max_mailboxes_per_domain, order.plan.mailbox_quota_mb)
+        except Exception as e:      # ödeme alındı; limit yükseltme hatası siparişi bozmaz, operatöre bildirilir
+            errs.append(f"{d.name}: {e}")
+    for mb in Mailbox.objects.filter(domain__owner=order.user, plan_suspended_at__isnull=False):
+        try:
+            get_backend().set_suspended(mb.address, False)
+            mb.status, mb.plan_suspended_at = Mailbox.ACTIVE, None
+            mb.save(update_fields=["status", "plan_suspended_at"])
+        except Exception as e:
+            errs.append(f"{mb.address}: {e}")
+    m.lifecycle = {}
+    m.save(update_fields=["lifecycle"])
+    audit(order.user, "plan.pro_activated", "order", str(order.id), until=m.paid_until.isoformat(), errors=errs)
+    return errs
+
+
+def finish_order(order, detail):
+    """iyzico retrieve cevabını siparişe uygular (çağıran transaction.atomic + select_for_update ile kilitler). Dönüş: True=ödendi.
+    paymentStatus SUCCESS ama imza/tutar/para birimi/sipariş tutmuyorsa FAILED DEĞİL **review**: para alınmış olabilir, insan bakar (operatöre alarm)."""
+    from decimal import Decimal, InvalidOperation
+    from . import iyzico
+    status = str(detail.get("paymentStatus") or "")
+    order.iyzico_payment_id = str(detail.get("paymentId") or "")[:64]
+    try:
+        consistent = (iyzico.verify_retrieve(detail) and detail.get("currency") == order.currency
+                      and detail.get("conversationId") == order.conversation_id and Decimal(str(detail.get("paidPrice"))) == order.amount_usd)
+    except (InvalidOperation, TypeError):
+        consistent = False
+    if status == "SUCCESS" and consistent:
+        order.status, order.paid_at = order.PAID, timezone.now()
+        order.save(update_fields=["status", "iyzico_payment_id", "paid_at"])
+        return True
+    if status == "SUCCESS":
+        order.status, order.error = order.REVIEW, "SUCCESS but verification mismatch"
+    else:
+        order.status, order.error = order.FAILED, str(detail.get("errorMessage") or status or "payment not confirmed")[:256]
+    order.save(update_fields=["status", "iyzico_payment_id", "error"])
+    return False
+
+
+def notify_operator(subject, body):
+    from .signals import _notify
+    _notify(subject, body)
+
+
+def send_receipt(order):
+    """Ödeme sonrası makbuz/sözleşme örneği (avukat taslağı 3.5): kalıcı veri saklayıcısı olarak e-postanın İÇİNE yazılır."""
+    from datetime import timedelta
+    from django.core.mail import send_mail
+    from django.conf import settings as st
+    until = order.user.membership.paid_until
+    d14 = (order.paid_at + timedelta(days=14)).strftime("%Y-%m-%d")
+    body = f"""Thank you. Your posta Pro plan is active.
+- Plan: Pro - 1 domain, up to 10 mailboxes (500 MB and 50 outgoing messages a day each), 1 year
+- Start: {order.paid_at:%Y-%m-%d} - Ends: {until:%Y-%m-%d} - No automatic renewal
+- Paid: USD {order.amount_usd} in total (no tax added on top), by card via iyzico - Order #{order.id}
+- Seller: HEYVANKA YAZILIM, Demirtas Mah. 77034 Sk. No: 11/A, Toroslar / Mersin, Turkiye - +90 850 840 43 37 - merhaba@preved.co
+- You accepted: Sales terms {order.sales_version} https://posta.preved.co/sales/{order.sales_version} and Terms {order.terms_version} https://posta.preved.co/terms/{order.terms_version}
+- Refund: full refund if you ask within 14 days (until {d14}) - reply to this email. Consumers can cancel any time after that and get back the unused part.
+- Complaints and disputes: merhaba@preved.co; consumers may also apply to the consumer arbitration committee or, after mediation, the consumer court (Turkiye).
+We will email your invoice within 7 days.
+
+-----
+
+Tesekkurler. posta Pro planin aktif.
+- Plan: Pro - 1 alan adi, en fazla 10 posta kutusu (her biri 500 MB ve gunde 50 giden ileti), 1 yil
+- Baslangic: {order.paid_at:%Y-%m-%d} - Bitis: {until:%Y-%m-%d} - Otomatik yenileme yok
+- Odenen: toplam {order.amount_usd} ABD dolari (uzerine vergi eklenmedi), iyzico ile kartla - Siparis no: {order.id}
+- Satici: HEYVANKA YAZILIM, Demirtas Mah. 77034 Sk. No: 11/A, Toroslar / Mersin - 0850 840 43 37 - merhaba@preved.co
+- Kabul ettigin metinler: Satis kosullari {order.sales_version} https://posta.preved.co/tr/sales/{order.sales_version} ve Kosullar {order.terms_version} https://posta.preved.co/tr/terms/{order.terms_version}
+- Iade: 14 gun icinde ({d14} tarihine kadar) istersen paranin tamamini iade ederiz; bu e-postayi yanitla. Tuketiciysen sonrasinda da istedigin an iptal edip kullanilmayan kismi geri alabilirsin.
+- Sikayet ve uyusmazlik: merhaba@preved.co; tuketiciysen tuketici hakem heyetine ya da arabuluculuktan sonra tuketici mahkemesine de basvurabilirsin.
+Faturani 7 gun icinde e-postayla gonderecegiz.
+"""
+    send_mail(f"posta Pro: payment received - order #{order.id}", body, st.DEFAULT_FROM_EMAIL, [order.user.email], fail_silently=True)
+
+
+def downgrade_to_free(user, reason="expired"):
+    """Pro bitti/iade: ücretsiz plana indir; fazla kutular (en eski kalır) askıya alınır, geri dönüş mümkün (plan_suspended_at). Silme burada YOK."""
+    from .models import Plan
+    free = Plan.objects.filter(is_default=True).first()
+    m = membership(user)
+    m.plan, m.paid_until = free, None
+    m.save(update_fields=["plan", "paid_until"])
+    keep = None
+    errs = []
+    for d in Domain.objects.filter(owner=user).exclude(status=Domain.SUSPENDED):
+        boxes = list(d.mailboxes.order_by("id"))
+        for mb in boxes[free.max_mailboxes_per_domain:]:
+            try:
+                get_backend().set_suspended(mb.address, True)
+            except Exception as e:
+                errs.append(f"{mb.address}: {e}")
+            mb.status, mb.plan_suspended_at = Mailbox.SUSPENDED, timezone.now()
+            mb.save(update_fields=["status", "plan_suspended_at"])
+        try:
+            get_backend().set_domain_limits(d.name, max(free.max_mailboxes_per_domain, len(boxes)), free.mailbox_quota_mb)
+        except Exception as e:
+            errs.append(f"{d.name}: {e}")
+    audit(user, f"plan.{reason}", "membership", str(m.id), errors=errs)
+    return errs

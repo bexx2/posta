@@ -114,6 +114,8 @@ EMAIL_USE_TLS = EMAIL_PORT == 587
 EMAIL_USE_SSL = EMAIL_PORT == 465
 EMAIL_TIMEOUT = 15
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", "posta <noreply@example.com>")
+# Operatör bildirimi (yeni kayıt / domain doğrulandı / ilk kutu). Boşsa kapalı (testler). Canlı: .env NOTIFY_EMAIL=merhaba@preved.co
+NOTIFY_EMAIL = env("NOTIFY_EMAIL", "")
 
 # Message-ID alan adı: Django make_msgid socket.getfqdn() kullanır → sunucuda "localhost"
 # → rspamd MID_RHS_NOT_FQDN (spam sinyali). FQDN'i sabitle (HeyvAnka'daki fix'in aynısı).
@@ -149,3 +151,10 @@ if env("TEST_SQLITE") == "1":
     MAIL_BACKEND, MAILCOW_API_KEY = "dryrun", ""
     EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
     RESERVED_DOMAIN_EXCEPTIONS = []
+
+# ── Ödeme (iyzico Checkout Form, USD). PAYMENTS_ENABLED=1 olana kadar panel yalnız "ek kapasite talebi"ni gösterir ────────────────
+PAYMENTS_ENABLED = env("PAYMENTS_ENABLED", "0") == "1"
+IYZICO_API_KEY = env("IYZICO_API_KEY", "")
+IYZICO_SECRET_KEY = env("IYZICO_SECRET_KEY", "")
+IYZICO_BASE_URL = env("IYZICO_BASE_URL", "https://api.iyzipay.com")
+IYZICO_CALLBACK_URL = env("IYZICO_CALLBACK_URL", env("PUBLIC_BASE_URL", "http://localhost:8000").rstrip("/") + "/app/billing/callback/")

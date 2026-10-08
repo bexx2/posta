@@ -4,6 +4,7 @@ from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
 from django.core import signing
 from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
 from django.core.mail import send_mail
 from django.db import transaction
 from django.utils import timezone
@@ -12,7 +13,7 @@ from .models import TermsAcceptance, User
 
 VERIFY_SALT = "posta.verify-email"
 VERIFY_MAX_AGE = 3 * 24 * 3600
-TERMS_VERSION = "2026-10-08"          # == scripts/build-legal.py VERSION (test denetler); sürümlü sayfa: /terms/<VERSION>
+TERMS_VERSION = "2026-10-08-2"          # == scripts/build-legal.py VERSION (test denetler); sürümlü sayfa: /terms/<VERSION>
 RESET_SALT = "posta.reset-password"
 RESET_MAX_AGE = 3600
 REQUIRED_DOCS = ("terms", "aup")            # onay kutusu yalnız bunlar için (avukat 2026-10-08 §2.2)
@@ -55,7 +56,11 @@ def send_verification(user: User) -> None:
 @transaction.atomic
 def register(email: str, password: str, accepted_version: str):
     email = (email or "").strip().lower()
-    if not email or "@" not in email or len(email) > 254:
+    if not email or len(email) > 254:
+        raise RegistrationError("invalid_email", "Enter a valid email address.")
+    try:
+        validate_email(email)   # "x@jamba" (TLD'siz) kabul edilmesin: doğrulama maili bounce olur (2026-10-08)
+    except ValidationError:
         raise RegistrationError("invalid_email", "Enter a valid email address.")
     if accepted_version != TERMS_VERSION:
         raise RegistrationError("terms_required", "You must accept the current terms of service and acceptable use policy.")

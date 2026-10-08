@@ -20,4 +20,6 @@ urlpatterns = [
     path("keys/new/", p.key_create, name="panel-key-create"),
     path("keys/<int:pk>/revoke/", p.key_revoke, name="panel-key-revoke"),
     path("upgrade/", p.upgrade, name="panel-upgrade"),
+    path("billing/", p.billing, name="panel-billing"),
+    path("billing/callback/", p.billing_callback, name="panel-billing-callback"),
 ]

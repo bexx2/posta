@@ -35,6 +35,7 @@ class Plan(models.Model):
     mailbox_quota_mb = models.PositiveIntegerField()
     daily_send_limit = models.PositiveIntegerField()
     price_try_monthly = models.PositiveIntegerField(null=True, blank=True)  # None = ücretsiz
+    price_usd_yearly = models.PositiveIntegerField(null=True, blank=True)  # ücretli plan: yıllık tek fiyat (USD)
     is_default = models.BooleanField(default=False)
 
     def __str__(self):
@@ -47,6 +48,8 @@ class Membership(models.Model):
     plan = models.ForeignKey(Plan, on_delete=models.PROTECT)
     status = models.CharField(max_length=12, default=ACTIVE, choices=[(ACTIVE, "active"), (SUSPENDED, "suspended")])
     since = models.DateTimeField(default=timezone.now)
+    paid_until = models.DateTimeField(null=True, blank=True)   # ücretli plan bitiş; boş = ücretsiz
+    lifecycle = models.JSONField(default=dict, blank=True)     # Pro hatırlatma/düşürme işaretleri (tekrar mail atmamak için)
 
 
 class Domain(models.Model):
@@ -81,6 +84,7 @@ class Mailbox(models.Model):
     quota_mb = models.PositiveIntegerField()
     status = models.CharField(max_length=12, default=ACTIVE, choices=[(ACTIVE, "active"), (SUSPENDED, "suspended")])
     created_at = models.DateTimeField(default=timezone.now)
+    plan_suspended_at = models.DateTimeField(null=True, blank=True)   # Pro bitince plan nedeniyle askıya alındı (yenilenirse geri açılır)
 
 
 class ApiKey(models.Model):
@@ -119,3 +123,28 @@ class UpgradeRequest(models.Model):
     note = models.CharField(max_length=500, blank=True)
     status = models.CharField(max_length=10, default=OPEN, choices=[(OPEN, "open"), (ANSWERED, "answered"), (CLOSED, "closed")])
     created_at = models.DateTimeField(default=timezone.now)
+
+
+class Order(models.Model):
+    """Pro plan satın alma (iyzico Checkout Form). Kart bilgisi saklanmaz."""
+    PENDING, PAID, FAILED, REVIEW = "pending", "paid", "failed", "review"   # review = iyzico SUCCESS dedi ama doğrulama tutmadı: İNSAN BAKAR
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="orders")
+    plan = models.ForeignKey(Plan, on_delete=models.PROTECT)
+    amount_usd = models.DecimalField(max_digits=8, decimal_places=2)
+    currency = models.CharField(max_length=3, default="USD")
+    status = models.CharField(max_length=8, default=PENDING, choices=[(PENDING, "pending"), (PAID, "paid"), (FAILED, "failed"), (REVIEW, "review")], db_index=True)
+    conversation_id = models.CharField(max_length=64, unique=True)
+    iyzico_token = models.CharField(max_length=128, blank=True, db_index=True)
+    iyzico_payment_id = models.CharField(max_length=64, blank=True)
+    buyer_name = models.CharField(max_length=240)
+    buyer_country = models.CharField(max_length=80)
+    buyer_address = models.CharField(max_length=300)
+    buyer_tax_id = models.CharField(max_length=40, blank=True)
+    terms_version = models.CharField(max_length=20)       # ödeme anında kabul edilen Terms sürümü
+    sales_version = models.CharField(max_length=20, blank=True)   # kabul edilen Satış koşulları sürümü
+    buyer_type = models.CharField(max_length=10, blank=True, choices=[("business", "business"), ("consumer", "consumer")])
+    accept_ip = models.GenericIPAddressField(null=True, blank=True)
+    consent_at = models.DateTimeField(default=timezone.now)
+    error = models.CharField(max_length=256, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    paid_at = models.DateTimeField(null=True, blank=True)
