@@ -1,0 +1,10 @@
+{% extends "panel/base.html" %}{% block title %}Sign in{% endblock %}
+{% block content %}<div class="narrow">
+<h1>Sign in</h1><p class="lead">Use the account you created for posta.</p>
+<form method="post" class="card">{% csrf_token %}
+<label for="email">Email</label><input id="email" name="email" type="email" autocomplete="username" required autofocus>
+<label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required>
+<p><button class="btn" type="submit">Sign in</button></p></form>
+<p class="small"><a href="{% url 'panel-forgot' %}">Forgot your password?</a></p>
+<p class="small">No account yet? <a href="{% url 'panel-register' %}">Create one</a>.</p>
+</div>{% endblock %}

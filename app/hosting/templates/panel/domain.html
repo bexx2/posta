@@ -1,0 +1,66 @@
+{% extends "panel/base.html" %}{% block title %}{{ d.name }}{% endblock %}
+{% block content %}
+<p class="small"><a href="{% url 'panel-home' %}">← Dashboard</a></p>
+<h1>{{ d.name }} {% if verified %}<span class="pill ok">verified</span>{% elif d.status == "suspended" %}<span class="pill">suspended</span>{% else %}<span class="pill wait">waiting for DNS</span>{% endif %}</h1>
+
+<h2>1. DNS records</h2>
+<p class="muted small">Add these at the company that manages your DNS. The first two are required. The others protect your mail from being marked as spam.</p>
+{% if check %}<p class="small" role="status"><strong>{{ req_ok }} of {{ req_total }} required records found.</strong>
+{% if req_ok == req_total %}Ready. {% if not verified %}Press <em>Check DNS</em> to open your mailbox.{% endif %}{% else %}Fix the rows marked below, wait a few minutes, and check again.{% endif %}</p>{% endif %}
+<div class="card">
+<table class="dns"><thead><tr><th>Type</th><th>Name</th><th>Value</th><th>Status</th></tr></thead><tbody>
+{% for r in rows %}<tr>
+<td><strong>{{ r.type }}</strong><br><span class="small muted">{{ r.label }} · {% if r.required %}required{% else %}advised{% endif %}</span></td>
+<td><code>{{ r.name }}</code></td><td><code>{{ r.value }}</code></td>
+<td class="small">{% if r.ok is None %}<span class="muted">not checked</span>
+{% elif r.ok %}<span class="pill ok">✔ found</span>
+{% elif r.required %}<span class="pill err">✘ missing</span>{% else %}<span class="pill wait">– not found</span>{% endif %}</td></tr>
+{% if r.ok is False and r.hint %}<tr class="hint"><td></td><td colspan="3" class="small muted">{{ r.hint }}</td></tr>{% endif %}
+{% endfor %}
+</tbody></table>
+{% if not d.dkim_txt %}<p class="small muted">The DKIM record appears here after the domain is verified.</p>{% endif %}
+</div>
+
+{% if d.status != "suspended" %}
+<form method="post" action="{% url 'panel-domain-verify' d.pk %}" class="card row">{% csrf_token %}
+  <div>{% if d.last_check_at %}<span class="small muted">Last checked {{ d.last_check_at|timesince }} ago.</span>{% else %}<span class="small muted">Not checked yet.</span>{% endif %}</div>
+  <button class="btn" type="submit">{% if verified %}Check again{% else %}Check DNS{% endif %}</button>
+</form>
+{% endif %}
+
+<h2>2. Mailbox</h2>
+{% for b in boxes %}
+<div class="card">
+  <div class="row"><strong class="mono">{{ b.address }}</strong><span class="small muted">{{ b.quota_mb }} MB</span></div>
+  <p class="small" style="margin:8px 0 0">IMAP <code>{{ connect.host }}</code> port {{ connect.imap_port }} (SSL) · SMTP <code>{{ connect.host }}</code> port {{ connect.smtp_port }} (STARTTLS) · user name is the full address.</p>
+  <details style="margin-top:8px"><summary class="small">Delete this mailbox</summary>
+    <form method="post" action="{% url 'panel-mailbox-delete' b.pk %}">{% csrf_token %}
+      <label for="del{{ b.pk }}" class="small">Type <code>{{ b.address }}</code>. The mailbox and all its mail are removed.</label>
+      <input id="del{{ b.pk }}" name="confirm" type="text" autocomplete="off" autocapitalize="none" required>
+      <p><button class="btn danger" type="submit">Delete mailbox</button></p></form></details>
+</div>
+{% endfor %}
+
+{% if not verified %}
+  <div class="card muted">Mailboxes open after the domain is verified.</div>
+{% elif at_limit %}
+  <div class="card"><strong>Free plan includes {{ plan.max_mailboxes_per_domain }} mailbox{{ plan.max_mailboxes_per_domain|pluralize:"es" }} per domain.</strong>
+  <span class="muted">Extra mailboxes are paid. <a href="{% url 'panel-upgrade' %}?kind=mailboxes">Ask for more mailboxes</a>. We reply with the price and open them only after you approve.</span></div>
+{% else %}
+<form method="post" action="{% url 'panel-mailbox-create' d.pk %}" class="card">{% csrf_token %}
+  <label for="local">Mailbox name</label>
+  <div class="row" style="justify-content:flex-start;flex-wrap:nowrap;gap:6px"><input id="local" name="local" type="text" placeholder="agent" autocapitalize="none" autocomplete="off" required style="max-width:240px"><span class="mono">@{{ d.name }}</span></div>
+  <label for="password">Mailbox password <span class="muted small">(at least 10 characters)</span></label>
+  <input id="password" name="password" type="password" autocomplete="new-password" required minlength="10">
+  <p class="small muted">We cannot show this password later. Save it in your password manager.</p>
+  <p><button class="btn" type="submit">Create mailbox</button></p>
+</form>
+{% endif %}
+
+<h2>Delete domain</h2>
+<details class="card"><summary>Remove this domain and its mailboxes</summary>
+<form method="post" action="{% url 'panel-domain-delete' d.pk %}">{% csrf_token %}
+<label for="deld" class="small">Type <code>{{ d.name }}</code> to confirm. Mailboxes and their mail are deleted.</label>
+<input id="deld" name="confirm" type="text" autocomplete="off" autocapitalize="none" required>
+<p><button class="btn danger" type="submit">Delete domain</button></p></form></details>
+{% endblock %}

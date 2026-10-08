@@ -1,0 +1,5 @@
+{% extends "panel/base.html" %}{% block title %}Email confirmation{% endblock %}
+{% block content %}<div class="narrow">
+{% if ok %}<h1>Email confirmed</h1><p><a class="btn" href="{% url 'panel-login' %}">Sign in</a></p>
+{% else %}<h1>This link does not work</h1><p>It is wrong or has expired. Register again to get a new link.</p><p><a class="btn ghost" href="{% url 'panel-register' %}">Register</a></p>{% endif %}
+</div>{% endblock %}

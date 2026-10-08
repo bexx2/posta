@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>{% block title %}posta{% endblock %} · posta</title>
+<style>
+@font-face{font-family:"Outfit";font-weight:400;font-display:swap;src:url("/fonts/outfit-latin-400-normal.woff2") format("woff2")}
+@font-face{font-family:"Outfit";font-weight:600;font-display:swap;src:url("/fonts/outfit-latin-600-normal.woff2") format("woff2")}
+@font-face{font-family:"JetBrains Mono";font-weight:400;font-display:swap;src:url("/fonts/jetbrains-mono-latin-400-normal.woff2") format("woff2")}
+:root{--paper:#f6f7fb;--card:#fff;--ink:#101b3a;--blue:#1d4ed8;--red:#c52f33;--green:#17803d;--haze:#e6ebf7;--muted:#5b6785;--line:#d5dcee}
+@media (prefers-color-scheme:dark){:root{--paper:#0c1226;--card:#131c38;--ink:#e8ecf8;--blue:#7aa2ff;--red:#ff7478;--green:#58d68d;--haze:#1b2548;--muted:#9aa7c9;--line:#27335e}}
+*,*::before,*::after{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font:400 1rem/1.55 "Outfit",system-ui,sans-serif}
+a{color:var(--blue);text-underline-offset:3px}
+:focus-visible{outline:3px solid var(--blue);outline-offset:2px;border-radius:3px}
+.wrap{max-width:860px;margin:0 auto;padding:0 16px}
+header{border-bottom:1px solid var(--line);background:var(--card)}
+header .wrap{display:flex;flex-wrap:wrap;gap:8px 20px;align-items:center;padding-top:12px;padding-bottom:12px}
+.brand{font-weight:600;font-size:1.25rem;color:var(--ink);text-decoration:none;margin-right:auto}
+nav{display:flex;flex-wrap:wrap;gap:4px 16px;align-items:center}
+nav a,nav button{font:inherit;color:var(--ink);background:none;border:0;padding:4px 0;cursor:pointer;text-decoration:none}
+nav a:hover,nav button:hover{color:var(--blue)}
+main{padding:28px 0 64px}
+h1{font-size:1.75rem;line-height:1.2;margin:0 0 6px}
+h2{font-size:1.15rem;margin:28px 0 10px}
+.lead{color:var(--muted);margin:0 0 20px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin:0 0 14px}
+.row{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;justify-content:space-between}
+label{display:block;font-weight:600;margin:12px 0 4px}
+input[type=text],input[type=email],input[type=password],input[type=number],select,textarea{width:100%;max-width:100%;font:inherit;color:var(--ink);background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:9px 11px}
+.check{display:flex;gap:10px;align-items:flex-start;font-weight:400;margin:10px 0}
+.check input{margin-top:5px}
+button.btn,a.btn{display:inline-block;font:600 1rem "Outfit",sans-serif;background:var(--blue);color:#fff;border:0;border-radius:8px;padding:10px 16px;cursor:pointer;text-decoration:none}
+@media (prefers-color-scheme:dark){button.btn,a.btn{color:#0c1226}}
+button.btn.ghost,a.btn.ghost{background:transparent;color:var(--blue);border:1px solid var(--blue)}
+button.btn.danger{background:transparent;color:var(--red);border:1px solid var(--red)}
+.msg{border-radius:8px;padding:10px 14px;margin:0 0 14px;border:1px solid var(--line);background:var(--haze)}
+.msg.error{border-color:var(--red);color:var(--red)}
+.msg.success{border-color:var(--green);color:var(--green)}
+.pill{display:inline-block;border-radius:99px;padding:1px 10px;font-size:.85rem;border:1px solid var(--line);background:var(--haze)}
+.pill.ok{color:var(--green);border-color:var(--green)}
+.pill.wait{color:var(--muted)}
+.pill.err{color:var(--red);border-color:var(--red)}
+code,.mono{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:.88rem}
+.dns{width:100%;border-collapse:collapse;margin:6px 0}
+.dns td,.dns th{text-align:left;vertical-align:top;padding:8px 6px;border-top:1px solid var(--line)}
+.dns tr.hint td{border-top:0;padding-top:0}
+.dns code{display:block;overflow-wrap:anywhere;user-select:all}
+.muted{color:var(--muted)}
+.small{font-size:.9rem}
+.bar{height:8px;border-radius:99px;background:var(--haze);overflow:hidden;margin-top:6px}
+.bar i{display:block;height:100%;background:var(--blue)}
+.narrow{max-width:420px;margin:0 auto}
+footer{color:var(--muted);font-size:.85rem;padding:0 0 40px}
+@media (max-width:560px){.dns thead{display:none}.dns td{display:block;border:0;padding:2px 0}.dns tr{display:block;border-top:1px solid var(--line);padding:8px 0}}
+</style>
+</head>
+<body>
+<header><div class="wrap">
+  <a class="brand" href="{% url 'panel-home' %}">posta</a>
+  {% if user.is_authenticated %}
+  <nav aria-label="Main">
+    <a href="{% url 'panel-home' %}">Dashboard</a>
+    <a href="{% url 'panel-keys' %}">API keys</a>
+    <a href="{% url 'panel-upgrade' %}">More capacity</a>
+    <form method="post" action="{% url 'panel-logout' %}" style="display:inline">{% csrf_token %}<button type="submit">Sign out</button></form>
+  </nav>
+  {% endif %}
+</div></header>
+<main><div class="wrap">
+{% for m in messages %}<div class="msg {{ m.tags }}" role="status">{{ m }}</div>{% endfor %}
+{% block content %}{% endblock %}
+</div></main>
+<footer><div class="wrap">Closed beta. Operated by HEYVANKA YAZILIM LTD. ŞTİ. (Türkiye). Questions: merhaba@preved.co</div></footer>
+</body>
+</html>

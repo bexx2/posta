@@ -1,0 +1,16 @@
+{% extends "panel/base.html" %}{% block title %}API keys{% endblock %}
+{% block content %}
+<h1>API keys</h1><p class="lead">Use a key to manage domains and mailboxes from code or from an AI agent. Send it as <code>Authorization: Bearer &lt;key&gt;</code> to <code>{{ base }}/v1/</code>.</p>
+{% for k in keys %}
+<div class="card row"><div><strong>{{ k.name }}</strong> <code>{{ k.prefix }}…</code><br><span class="small muted">{{ k.scopes }}{% if k.last_used_at %} · last used {{ k.last_used_at|date:"Y-m-d H:i" }}{% else %} · never used{% endif %}</span></div>
+<form method="post" action="{% url 'panel-key-revoke' k.pk %}">{% csrf_token %}<button class="btn danger" type="submit">Revoke</button></form></div>
+{% empty %}<div class="card muted">No active keys.</div>{% endfor %}
+<h2>New key</h2>
+<form method="post" action="{% url 'panel-key-create' %}" class="card">{% csrf_token %}
+<label for="kname">Name</label><input id="kname" name="name" type="text" placeholder="my agent" maxlength="64" required>
+<fieldset style="border:0;padding:0;margin:12px 0 0"><legend style="font-weight:600">Permissions</legend>
+{% for s in scopes %}<label class="check"><input type="checkbox" name="scopes" value="{{ s }}"{% if "read" in s %} checked{% endif %}><span class="mono">{{ s }}</span></label>{% endfor %}
+</fieldset>
+<p class="small muted">The key is shown once. We store only a fingerprint, so we cannot show it again.</p>
+<p><button class="btn" type="submit">Create key</button></p></form>
+{% endblock %}

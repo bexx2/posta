@@ -1,0 +1,27 @@
+{% extends "panel/base.html" %}{% block title %}Dashboard{% endblock %}
+{% block content %}
+<h1>Dashboard</h1>
+<p class="lead">Plan: <strong>{{ plan.name }}</strong> · {{ plan.max_domains }} domain, {{ plan.max_mailboxes_per_domain }} mailbox per domain, {{ plan.mailbox_quota_mb }} MB each, {{ plan.daily_send_limit }} messages a day per mailbox.</p>
+
+<h2>Your domains</h2>
+{% for d in domains %}
+<div class="card row">
+  <div><a href="{% url 'panel-domain' d.pk %}"><strong>{{ d.name }}</strong></a><br>
+  <span class="small muted">{{ d.mailboxes.count }} of {{ plan.max_mailboxes_per_domain }} mailbox{{ plan.max_mailboxes_per_domain|pluralize:"es" }}</span></div>
+  {% if d.status == "verified" %}<span class="pill ok">verified</span>{% elif d.status == "suspended" %}<span class="pill">suspended</span>{% else %}<span class="pill wait">waiting for DNS</span>{% endif %}
+</div>
+{% empty %}
+<div class="card"><p style="margin:0">No domain yet. Add the domain you own to start.</p></div>
+{% endfor %}
+
+{% if can_add_domain %}
+<form method="post" action="{% url 'panel-domain-add' %}" class="card">{% csrf_token %}
+  <label for="name">Add a domain</label>
+  <div class="row" style="justify-content:flex-start;flex-wrap:nowrap"><input id="name" name="name" type="text" placeholder="example.com" autocapitalize="none" autocomplete="off" required><button class="btn" type="submit">Add</button></div>
+  <p class="small muted" style="margin:8px 0 0">You will get DNS records to set. We open mailboxes only after we see them.</p>
+</form>
+{% else %}
+<div class="card"><strong>Free plan limit reached.</strong> <span class="muted">Need more domains or mailboxes? They are paid. <a href="{% url 'panel-upgrade' %}">Ask for more capacity</a>.</span></div>
+{% endif %}
+{% if open_requests %}<p class="small muted">You have {{ open_requests }} open capacity request{{ open_requests|pluralize }}. We will write to you.</p>{% endif %}
+{% endblock %}

@@ -1,0 +1,3 @@
+{% extends "panel/base.html" %}{% block title %}Check your email{% endblock %}
+{% block content %}<div class="narrow"><h1>Check your email</h1>
+<p>If the address can be registered, we sent a confirmation link. It works for 3 days. Open it, then <a href="{% url 'panel-login' %}">sign in</a>.</p></div>{% endblock %}

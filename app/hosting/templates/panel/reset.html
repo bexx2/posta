@@ -1,0 +1,9 @@
+{% extends "panel/base.html" %}{% block title %}Choose a new password{% endblock %}
+{% block content %}<div class="narrow">
+{% if bad %}<h1>Link expired</h1><p>This reset link is invalid or has expired. <a href="{% url 'panel-forgot' %}">Ask for a new one</a>.</p>
+{% else %}<h1>Choose a new password</h1>
+<form method="post" class="card">{% csrf_token %}
+<label for="password">New password</label><input id="password" name="password" type="password" autocomplete="new-password" required autofocus>
+<label for="password2">Repeat it</label><input id="password2" name="password2" type="password" autocomplete="new-password" required>
+<p><button class="btn" type="submit">Change password</button></p></form>{% endif %}
+</div>{% endblock %}

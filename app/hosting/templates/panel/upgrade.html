@@ -1,0 +1,14 @@
+{% extends "panel/base.html" %}{% block title %}More capacity{% endblock %}
+{% block content %}
+<h1>More capacity</h1>
+<p class="lead">Free includes {{ plan.max_domains }} domain and {{ plan.max_mailboxes_per_domain }} mailbox. Anything beyond that is paid.</p>
+<div class="card"><strong>How it works.</strong> Tell us what you need. We write to you with the price. Nothing is charged, and nothing opens, until you approve the price.</div>
+<form method="post" class="card">{% csrf_token %}
+<label for="kind">I need more</label>
+<select id="kind" name="kind"><option value="mailboxes"{% if kind == "mailboxes" %} selected{% endif %}>mailboxes</option><option value="domains"{% if kind == "domains" %} selected{% endif %}>domains</option></select>
+<label for="quantity">How many extra</label><input id="quantity" name="quantity" type="number" min="1" max="100" value="5" required>
+<label for="note">What will you use them for? <span class="muted small">(optional)</span></label><textarea id="note" name="note" rows="3" maxlength="500"></textarea>
+<p><button class="btn" type="submit">Send request</button></p></form>
+{% if reqs %}<h2>Your requests</h2>{% for r in reqs %}
+<div class="card row"><span>{{ r.quantity }} more {{ r.kind }}</span><span class="small muted">{{ r.created_at|date:"Y-m-d" }} · {{ r.status }}</span></div>{% endfor %}{% endif %}
+{% endblock %}

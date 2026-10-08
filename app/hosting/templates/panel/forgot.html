@@ -1,0 +1,8 @@
+{% extends "panel/base.html" %}{% block title %}Forgot password{% endblock %}
+{% block content %}<div class="narrow">
+<h1>Forgot your password?</h1><p class="lead">Enter your account email. If it exists, we send a reset link.</p>
+<form method="post" class="card">{% csrf_token %}
+<label for="email">Email</label><input id="email" name="email" type="email" autocomplete="username" required autofocus>
+<p><button class="btn" type="submit">Send reset link</button></p></form>
+<p class="small"><a href="{% url 'panel-login' %}">Back to sign in</a></p>
+</div>{% endblock %}

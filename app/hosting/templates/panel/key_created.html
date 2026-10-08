@@ -1,0 +1,9 @@
+{% extends "panel/base.html" %}{% block title %}New API key{% endblock %}
+{% block content %}
+<h1>Your new key</h1>
+<div class="msg success">Copy it now. This is the only time we show it.</div>
+<div class="card"><code style="display:block;overflow-wrap:anywhere;user-select:all;font-size:1rem">{{ full }}</code>
+<p class="small muted" style="margin-bottom:0">{{ key.name }} · {{ key.scopes }}</p></div>
+<pre class="card mono" style="overflow:auto">curl -H "Authorization: Bearer {{ key.prefix }}…" {{ base }}/v1/usage</pre>
+<p><a class="btn ghost" href="{% url 'panel-keys' %}">Back to keys</a></p>
+{% endblock %}

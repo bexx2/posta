@@ -1,0 +1,12 @@
+{% extends "panel/base.html" %}{% block title %}Create account{% endblock %}
+{% block content %}<div class="narrow">
+<h1>Create your account</h1><p class="lead">Free: 1 domain, 1 mailbox, 500 MB, up to 50 messages a day. No card. More capacity is paid, and we ask you first.</p>
+<form method="post" class="card">{% csrf_token %}
+<label for="email">Email</label><input id="email" name="email" type="email" autocomplete="username" required autofocus>
+<label for="password">Password <span class="muted small">(at least 10 characters)</span></label><input id="password" name="password" type="password" autocomplete="new-password" required minlength="10">
+<label for="password2">Repeat password</label><input id="password2" name="password2" type="password" autocomplete="new-password" required minlength="10">
+<label class="check"><input type="checkbox" name="accept" required><span>I accept the <a href="/terms/{{ terms_version }}" target="_blank" rel="noopener">terms of service</a> and the <a href="/aup/{{ terms_version }}" target="_blank" rel="noopener">acceptable use policy</a> (version {{ terms_version }}). I use posta for my trade, business or profession.</span></label>
+<p class="small">How we handle your data: <a href="/privacy" target="_blank" rel="noopener">privacy notice</a>. Türkçe: <a href="/tr/terms/{{ terms_version }}" target="_blank" rel="noopener">koşullar</a> · <a href="/tr/aup/{{ terms_version }}" target="_blank" rel="noopener">kullanım politikası</a> · <a href="/tr/privacy" target="_blank" rel="noopener">aydınlatma metni</a> (Türkçe metin esastır).</p>
+<p><button class="btn" type="submit">Create account</button></p></form>
+<p class="small">Already registered? <a href="{% url 'panel-login' %}">Sign in</a>.</p>
+</div>{% endblock %}
