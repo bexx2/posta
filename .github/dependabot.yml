@@ -5,6 +5,14 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    ignore:
+      # Stay on Django 5.2 LTS (security support until April 2028); move to 6.x on purpose. Only 5.2.x patches (incl. security).
+      - dependency-name: "django"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+  - package-ecosystem: "pip"
+    directories: ["/clients/python", "/clients/mcp"]
+    schedule:
+      interval: "weekly"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
