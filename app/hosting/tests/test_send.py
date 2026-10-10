@@ -90,3 +90,23 @@ class MailcowSubmitCleansUp(APITestCase):
         add = next(c for c in calls if c[1] == "add/app-passwd")
         self.assertEqual(add[2]["protocols"], ["smtp_access"])
         self.assertIn(("POST", "delete/app-passwd", [7]), calls)      # yalnız kendi geçici parolası; müşterinin parolasına dokunmaz
+
+
+class MailcowSendLimit(APITestCase):
+    def test_limit_uses_rl_mbox_and_is_read_back(self):
+        """🐞 2026-10-11: edit/mailbox rl_* alanlarını sessizce yoksayıyordu → hiçbir kutuda sınır yoktu."""
+        be = MailcowBackend("https://127.0.0.1/api/v1", "k")
+        calls = []
+        def fake(method, path, payload=None):
+            calls.append((method, path, payload))
+            return {"value": "50", "frame": "d"} if path.startswith("get/rl-mbox") else [{"type": "success"}]
+        with mock.patch.object(be, "_call", side_effect=fake):
+            be.add_mailbox("agent@acme.dev", "pw", 500, 50)
+        self.assertIn(("POST", "edit/rl-mbox", {"items": ["agent@acme.dev"], "attr": {"rl_value": "50", "rl_frame": "d"}}), calls)
+        self.assertFalse(any(c[1] == "edit/mailbox" and "rl_value" in str(c[2]) for c in calls))
+
+    def test_limit_not_applied_is_an_error(self):
+        be = MailcowBackend("https://127.0.0.1/api/v1", "k")
+        with mock.patch.object(be, "_call", side_effect=lambda m, p, d=None: [] if p.startswith("get/rl-mbox") else [{"type": "success"}]):
+            with self.assertRaises(Exception):
+                be.set_send_limit("agent@acme.dev", 50)

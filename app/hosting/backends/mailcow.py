@@ -58,8 +58,16 @@ class MailcowBackend(MailBackend):
         self._call("POST", "add/mailbox", {
             "local_part": local, "domain": domain, "name": local, "password": password, "password2": password,
             "quota": str(quota_mb), "active": "1", "force_pw_update": "0", "tls_enforce_in": "1", "tls_enforce_out": "1"})
-        # mailcow: gönderim sınırı kutu başına GÜNLÜK (plan metni "N a day" ile birebir; 2026-10-08'e kadar //24 saatlikti → çelişkiydi)
-        self._call("POST", "edit/mailbox", {"items": [address], "attr": {"rl_value": str(send_per_day), "rl_frame": "d"}})
+        self.set_send_limit(address, send_per_day)
+
+    def set_send_limit(self, address, send_per_day):
+        """Kutu başına GÜNLÜK gönderim sınırı. rspamd her ALICIYI 1 sayar (Kime+Bilgi+Gizli; 50 BCC'li tek ileti = 50).
+        🐞 2026-10-11'e kadar bu `edit/mailbox` attr'ıyla yapılıyordu: Mailcow o uçta rl_* alanlarını SESSİZCE yoksayar → hiçbir
+        müşteri kutusunda sınır yoktu. Doğru uç `edit/rl-mbox` (Redis RL_VALUE'ya yazar); yazıldığını geri okuyarak doğrula."""
+        self._call("POST", "edit/rl-mbox", {"items": [address], "attr": {"rl_value": str(send_per_day), "rl_frame": "d"}})
+        got = self._call("GET", f"get/rl-mbox/{address}")
+        if not (isinstance(got, dict) and str(got.get("value")) == str(send_per_day) and got.get("frame") == "d"):
+            raise BackendError(f"mailcow rl-mbox {address}: sınır yazılamadı ({str(got)[:120]})")
 
     def delete_mailbox(self, address):
         self._call("POST", "delete/mailbox", [address])

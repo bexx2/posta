@@ -47,3 +47,6 @@ class DryRunBackend(MailBackend):
 
     def message_counts(self):
         return dict(self.counts)
+
+    def set_send_limit(self, address, send_per_day):
+        self.ops.append(("set_send_limit", address, send_per_day))

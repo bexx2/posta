@@ -13,3 +13,4 @@ class MailBackend:
     def set_domain_limits(self, domain: str, max_mailboxes: int, quota_mb: int) -> None: raise NotImplementedError
     def submit(self, address: str, msg) -> dict: raise NotImplementedError   # kutunun KENDİSİ adına gönder (SMTP); dönüş: reddedilen alıcılar {adres: (kod, mesaj)}
     def message_counts(self) -> dict: raise NotImplementedError   # {adres: kutudaki ileti sayısı} — içerik değil, yalnız sayı (#4)
+    def set_send_limit(self, address: str, send_per_day: int) -> None: raise NotImplementedError   # günlük, ALICI başına sayılır
