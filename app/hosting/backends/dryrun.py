@@ -13,9 +13,11 @@ class DryRunBackend(MailBackend):
 
     def __init__(self):
         self.ops = []
+        self.counts = {}
 
     def reset(self):
         self.ops.clear()
+        self.counts.clear()
 
     def add_domain(self, domain, max_mailboxes, quota_mb):
         self.ops.append(("add_domain", domain, max_mailboxes, quota_mb))
@@ -38,3 +40,10 @@ class DryRunBackend(MailBackend):
 
     def set_domain_limits(self, domain, max_mailboxes, quota_mb):
         self.ops.append(("set_domain_limits", domain, max_mailboxes, quota_mb))
+
+    def submit(self, address, msg):
+        self.ops.append(("submit", address, msg["To"], msg["Subject"]))
+        return {}
+
+    def message_counts(self):
+        return dict(self.counts)

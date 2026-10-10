@@ -43,6 +43,11 @@ Full API reference is coming. Until then the endpoints above are stable.
 Receive mail with Node.js over IMAP / Node.js ile IMAP üzerinden posta alma:
 [example and setup / örnek ve kurulum](docs/receive-node.md).
 
+## Clients
+- **Python SDK** ([clients/python](clients/python)): API wrapper, `Inbox.wait_for()` for incoming mail, webhook signature check.
+- **MCP server** ([clients/mcp](clients/mcp)): gives an AI agent tools to create mailboxes, send, list, read and wait for mail.
+- **Send** with `POST /v1/mailboxes/{id}/send` and get **webhooks** when mail arrives: see https://posta.preved.co/docs.
+
 ## Who it is for
 Developers shipping a new product, agencies setting up client domains, and people building AI agents that need their own email address.
 

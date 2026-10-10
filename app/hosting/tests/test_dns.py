@@ -55,3 +55,42 @@ class DnsChecks(TestCase):
             self.assertEqual(services.verify_domain(user, self.d).status, "verified")
             first = self.d.verified_at
             self.assertEqual(services.verify_domain(user, self.d).verified_at, first)    # ikinci kez yeniden hazırlamaz
+
+
+class DomainSquatting(TestCase):
+    """2026-10-11: bekleyen talep adı kilitlemez; TXT'yi kanıtlayan ilk kişi alır, diğer bekleyenler silinir."""
+    def setUp(self):
+        from hosting.backends.dryrun import DryRunBackend
+        DryRunBackend.instance().reset()
+        self.squatter = User.objects.create_user(email="s@example.com", password="x-long-enough-pass-1", email_verified_at=timezone.now())
+        self.owner = User.objects.create_user(email="o@example.com", password="x-long-enough-pass-1", email_verified_at=timezone.now())
+
+    def _verify(self, user, d):
+        rec = {(d.txt_record["name"], "TXT"): [d.txt_record["value"]], (d.name, "MX"): [f"10 {settings.MX_TARGET}."]}
+        with mock.patch("hosting.services._resolve", lambda n, t: rec.get((n, t), [])):
+            return services.verify_domain(user, d)
+
+    def test_pending_claim_does_not_block_real_owner(self):
+        squat = services.add_domain(self.squatter, "bigco.com")
+        real = services.add_domain(self.owner, "bigco.com")             # eskiden domain_taken (409) idi
+        self.assertNotEqual(squat.verification_token, real.verification_token)
+        self._verify(self.owner, real)
+        self.assertFalse(Domain.objects.filter(pk=squat.pk).exists())    # kaybeden bekleyen talep temizlendi
+        with self.assertRaises(services.ServiceError) as e:
+            services.add_domain(self.squatter, "bigco.com")
+        self.assertEqual(e.exception.code, "domain_taken")
+
+    def test_squatter_cannot_verify_with_owners_token(self):
+        squat = services.add_domain(self.squatter, "bigco.com")
+        real = services.add_domain(self.owner, "bigco.com")
+        rec = {(real.txt_record["name"], "TXT"): [real.txt_record["value"]], ("bigco.com", "MX"): [f"10 {settings.MX_TARGET}."]}
+        with mock.patch("hosting.services._resolve", lambda n, t: rec.get((n, t), [])):
+            services.verify_domain(self.squatter, squat)
+        squat.refresh_from_db()
+        self.assertEqual(squat.status, Domain.PENDING)                   # kendi token'ı DNS'te yok
+
+    def test_same_owner_twice_is_rejected(self):
+        services.add_domain(self.owner, "bigco.com")
+        with self.assertRaises(services.ServiceError) as e:
+            services.add_domain(self.owner, "bigco.com")
+        self.assertEqual(e.exception.code, "domain_exists")

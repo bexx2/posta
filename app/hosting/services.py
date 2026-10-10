@@ -7,6 +7,7 @@ import dns.resolver
 import tldextract
 from django.conf import settings
 from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -55,21 +56,29 @@ def add_domain(user, raw_name: str) -> Domain:
         name = normalize_domain(raw_name)
     except ValidationError as e:
         raise ServiceError("invalid_domain", e.messages[0])
+    if Domain.objects.filter(owner=user, name=name).exists():
+        raise ServiceError("domain_exists", "You already added this domain.", 409)
     if Domain.objects.filter(owner=user).exclude(status=Domain.SUSPENDED).count() >= plan.max_domains:
         raise ServiceError("plan_limit", f"Your plan allows {plan.max_domains} domain(s).", 403)
-    if Domain.objects.filter(name=name).exists():
+    _check_claim(user, name)
+    d = Domain.objects.create(owner=user, name=name)
+    audit(user, "domain.add", "domain", name)
+    return d
+
+
+def _check_claim(user, name: str):
+    """Bekleyen (pending) talepler kimseyi engellemez; yalnız başka hesabın DOĞRULANMIŞ/askıdaki kaydı engeller. Hem eklemede hem
+    doğrulamada çağrılır (ikisi aynı anda bekleyebilir; ilk doğrulayan alır)."""
+    claimed = Domain.objects.exclude(owner=user).exclude(status=Domain.PENDING)
+    if claimed.filter(name=name).exists():
         raise ServiceError("domain_taken", "This domain is already registered on posta.", 409)
     # Çoklu hesap + subdomain rotasyonu önlemi (2026-10-10): max_domains hesap başına, ama biri
     # 10 farklı hesapla kendi domaininin altına a.evil.com, b.evil.com... eklerse her biri taze
     # 1 kutu × daily_send_limit kazanır. Aynı kök domain (eTLD+1) BAŞKA bir hesapta zaten varsa reddet.
     apex = _apex(name)
-    if Domain.objects.exclude(owner=user).exclude(status=Domain.SUSPENDED).filter(
-            Q(name=apex) | Q(name__iendswith="." + apex)).exists():
+    if claimed.filter(Q(name=apex) | Q(name__iendswith="." + apex)).exists():
         raise ServiceError("domain_taken",
                             "A domain under this same root domain is already registered by another account.", 409)
-    d = Domain.objects.create(owner=user, name=name)
-    audit(user, "domain.add", "domain", name)
-    return d
 
 
 def _resolve(name, rtype):
@@ -108,6 +117,8 @@ def verify_domain(user, domain: Domain) -> Domain:
     res = check_dns(domain, found)
     domain.last_check, domain.last_check_at = ({**res, "_found": found} if found else res), timezone.now()
     if res["ownership_txt"] and res["mx"]:
+        if domain.status == Domain.PENDING:
+            _check_claim(user, domain.name)                 # başka hesap bu arada doğruladıysa: 409
         if domain.status != Domain.SUSPENDED:
             domain.status = Domain.VERIFIED
         if domain.status == Domain.VERIFIED and not domain.verified_at:
@@ -122,6 +133,11 @@ def verify_domain(user, domain: Domain) -> Domain:
                 raise ServiceError("backend_error", "Could not prepare the domain right now. Try again shortly.", 503)
             audit(user, "domain.verify", "domain", domain.name)
     domain.save()
+    if domain.status == Domain.VERIFIED:
+        # Aynı ada bekleyen diğer talepler artık geçersiz (sahiplik kanıtlandı); temizle ki panelde boşuna "waiting" kalmasınlar.
+        for other in Domain.objects.filter(name=domain.name, status=Domain.PENDING).exclude(pk=domain.pk).select_related("owner"):
+            audit(other.owner, "domain.claim_lost", "domain", other.name, winner=domain.owner_id)
+            other.delete()
     return domain
 
 
@@ -226,6 +242,149 @@ def request_upgrade(user, kind: str, quantity, note: str = ""):
     req = UpgradeRequest.objects.create(user=user, kind=kind, quantity=qty, note=(note or "").strip()[:500])
     audit(user, "upgrade.request", "upgrade", str(req.pk), kind=kind, quantity=qty)
     return req
+
+
+# ---------- API'den gönderim (#7) ----------
+SEND_MAX_RECIPIENTS = 10
+SEND_MAX_BYTES = 200_000
+
+
+def send_message(user, mailbox: Mailbox, to, subject: str, text: str = "", html: str = "", reply_to: str = "") -> dict:
+    """Kutu adına tek ileti. Toplu gönderim değil: en çok 10 alıcı, düz metin ve/veya HTML, ek yok. Günlük sınırı Mailcow sayar
+    (SMTP ile aynı sayaç); aşılırsa 429 daily_limit."""
+    import smtplib
+    from email.message import EmailMessage
+    from email.utils import formatdate, make_msgid
+    if mailbox.domain.owner_id != user.id:
+        raise ServiceError("not_found", "Mailbox not found.", 404)
+    if mailbox.status != Mailbox.ACTIVE:
+        raise ServiceError("mailbox_suspended", "This mailbox is suspended.", 403)
+    rcpts = [to] if isinstance(to, str) else to
+    if not isinstance(rcpts, list) or not rcpts or len(rcpts) > SEND_MAX_RECIPIENTS:
+        raise ServiceError("invalid_recipients", f"to must be one address or a list of 1-{SEND_MAX_RECIPIENTS} addresses.")
+    clean = []
+    for r in rcpts:
+        r = str(r).strip()
+        try:
+            validate_email(r)
+        except ValidationError:
+            raise ServiceError("invalid_recipients", f"Not a valid address: {r[:100]}")
+        clean.append(r)
+    subject = " ".join(str(subject or "").split())[:300]
+    text, html = str(text or ""), str(html or "")
+    if not subject or not (text or html):
+        raise ServiceError("invalid_message", "subject and text (or html) are required.")
+    if len(text.encode()) + len(html.encode()) > SEND_MAX_BYTES:
+        raise ServiceError("message_too_large", f"Message body is limited to {SEND_MAX_BYTES // 1000} KB.", 413)
+    msg = EmailMessage()
+    msg["From"], msg["To"], msg["Subject"] = mailbox.address, ", ".join(clean), subject
+    msg["Message-ID"] = make_msgid(domain=mailbox.domain.name)
+    msg["Date"] = formatdate(localtime=False)          # eksik Date = standart dışı + spam puanı (MCP canlı testinde yakalandı)
+    if reply_to:
+        try:
+            validate_email(str(reply_to).strip())
+        except ValidationError:
+            raise ServiceError("invalid_message", "reply_to is not a valid address.")
+        msg["Reply-To"] = str(reply_to).strip()
+    msg.set_content(text or "This message has an HTML version.")
+    if html:
+        msg.add_alternative(html, subtype="html")
+    try:
+        refused = get_backend().submit(mailbox.address, msg) or {}
+    except smtplib.SMTPResponseException as e:
+        why = (e.smtp_error or b"").decode(errors="replace")
+        if "ratelimit" in why.lower() or "rate limit" in why.lower():
+            raise ServiceError("daily_limit", "Daily sending limit reached for this mailbox. It resets within 24 hours.", 429)
+        log.warning("send failed %s: %s %s", mailbox.address, e.smtp_code, why[:200])
+        raise ServiceError("send_failed", f"The mail server refused the message ({e.smtp_code}).", 502)
+    except smtplib.SMTPRecipientsRefused:
+        raise ServiceError("invalid_recipients", "All recipients were refused.", 400)
+    except (BackendError, smtplib.SMTPException, OSError) as e:
+        log.error("send backend error %s: %s", mailbox.address, e)
+        raise ServiceError("backend_error", "Could not send right now. Try again shortly.", 503)
+    accepted = [r for r in clean if r not in refused]
+    audit(user, "mail.send", "mailbox", mailbox.address, recipients=len(clean), refused=len(refused))
+    return {"message_id": msg["Message-ID"], "accepted": accepted, "refused": sorted(refused)}
+
+
+# ---------- gelen posta webhook'u (#4) ----------
+WEBHOOK_TIMEOUT = 5
+WEBHOOK_DISABLE_AFTER = 60          # art arda başarısız deneme (dakikalık timer → ~1 saat)
+
+
+def _public_https(url: str) -> str:
+    """SSRF kapısı: yalnız https ve yalnız herkese açık (global) IP'lere çözülen ad. Dönüş: bağlanılacak (kontrol edilmiş) IP.
+    deliver_webhook bağlantıyı BU IP'ye sabitler: kontrol ile bağlantı arasında DNS değişse de (rebinding) iç ağa gidilmez."""
+    import ipaddress
+    import socket
+    from urllib.parse import urlsplit
+    u = urlsplit(url or "")
+    if u.scheme != "https" or not u.hostname or u.username or u.password:
+        raise ServiceError("invalid_webhook_url", "Use an https:// URL without credentials.")
+    try:
+        infos = socket.getaddrinfo(u.hostname, u.port or 443, proto=socket.IPPROTO_TCP)
+    except (socket.gaierror, UnicodeError):
+        raise ServiceError("invalid_webhook_url", "The webhook host does not resolve.")
+    if not infos or any(not ipaddress.ip_address(i[4][0]).is_global for i in infos):
+        raise ServiceError("invalid_webhook_url", "The webhook host must resolve only to public IP addresses.")
+    return infos[0][4][0]
+
+
+def set_webhook(user, mailbox: Mailbox, url: str) -> str:
+    """URL'yi ayarlar, YENİ imza anahtarı üretir ve döner (yalnız bu yanıtta gösterilir). Sayaç şimdiden başlar: eski postalar bildirilmez."""
+    import secrets
+    if mailbox.domain.owner_id != user.id:
+        raise ServiceError("not_found", "Mailbox not found.", 404)
+    url = (url or "").strip()
+    if len(url) > 500:
+        raise ServiceError("invalid_webhook_url", "URL is too long.")
+    _public_https(url)
+    try:
+        seen = get_backend().message_counts().get(mailbox.address)
+    except BackendError:
+        seen = None
+    mailbox.webhook_url, mailbox.webhook_secret = url, secrets.token_hex(32)
+    mailbox.webhook_seen, mailbox.webhook_pending, mailbox.webhook_fails, mailbox.webhook_disabled_at = seen, 0, 0, None
+    mailbox.save(update_fields=["webhook_url", "webhook_secret", "webhook_seen", "webhook_pending", "webhook_fails", "webhook_disabled_at"])
+    audit(user, "webhook.set", "mailbox", mailbox.address, host=url.split("/")[2])
+    return mailbox.webhook_secret
+
+
+def clear_webhook(user, mailbox: Mailbox):
+    if mailbox.domain.owner_id != user.id:
+        raise ServiceError("not_found", "Mailbox not found.", 404)
+    mailbox.webhook_url = mailbox.webhook_secret = ""
+    mailbox.webhook_seen, mailbox.webhook_pending, mailbox.webhook_fails, mailbox.webhook_disabled_at = None, 0, 0, None
+    mailbox.save(update_fields=["webhook_url", "webhook_secret", "webhook_seen", "webhook_pending", "webhook_fails", "webhook_disabled_at"])
+    audit(user, "webhook.clear", "mailbox", mailbox.address)
+
+
+def webhook_signature(secret: str, ts: str, body: bytes) -> str:
+    import hashlib
+    import hmac
+    return hmac.new(secret.encode(), ts.encode() + b"." + body, hashlib.sha256).hexdigest()
+
+
+def deliver_webhook(mailbox: Mailbox, payload: dict) -> bool:
+    """İmzalı POST. Başlık: Posta-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, "<t>." + gövde)>. 2xx = başarılı. Yönlendirme izlenmez."""
+    import json
+    import time
+    from urllib.parse import urlsplit
+    import urllib3
+    ip = _public_https(mailbox.webhook_url)
+    u = urlsplit(mailbox.webhook_url)
+    body = json.dumps(payload, separators=(",", ":")).encode()
+    ts = str(int(time.time()))
+    # Kontrol edilen IP'ye bağlan; TLS adı (SNI + sertifika doğrulaması) ve Host başlığı asıl ad. Yönlendirme izlenmez.
+    pool = urllib3.HTTPSConnectionPool(ip, port=u.port or 443, server_hostname=u.hostname, assert_hostname=u.hostname,
+                                       cert_reqs="CERT_REQUIRED", timeout=urllib3.Timeout(total=WEBHOOK_TIMEOUT), retries=False)
+    try:
+        r = pool.urlopen("POST", (u.path or "/") + (f"?{u.query}" if u.query else ""), body=body, redirect=False, headers={
+            "Host": u.netloc.split("@")[-1], "Content-Type": "application/json", "User-Agent": "posta-webhook/1",
+            "Posta-Signature": f"t={ts},v1={webhook_signature(mailbox.webhook_secret, ts, body)}"})
+    finally:
+        pool.close()
+    return 200 <= r.status < 300
 
 
 # ---------- Pro plan satın alma (iyzico) ----------

@@ -70,3 +70,31 @@ class MailcowBackend(MailBackend):
     def set_domain_limits(self, domain, max_mailboxes, quota_mb):
         self._call("POST", "edit/domain", {"items": [domain], "attr": {
             "mailboxes": str(max_mailboxes), "defquota": str(quota_mb), "maxquota": str(quota_mb), "quota": str(quota_mb * max_mailboxes)}})
+
+    def submit(self, address, msg):
+        """API'den gönderim (#7). Kalıcı kimlik bilgisi SAKLANMAZ: kutuya yalnız SMTP'ye izinli tek kullanımlık uygulama parolası
+        açılır, ileti kutunun kendi adıyla 587'den gönderilir, parola hemen silinir. Mailcow'un kutu başına günlük limiti (rl_frame=d)
+        SMTP ve API gönderimlerini birlikte sayar; IMAP'e erişimi olmadığı için bu parola postaları okuyamaz."""
+        import secrets
+        import smtplib
+        import ssl
+        from django.conf import settings
+        name, pw = f"posta-api-{secrets.token_hex(6)}", secrets.token_urlsafe(24)
+        self._call("POST", "add/app-passwd", {"username": address, "app_name": name, "app_passwd": pw, "app_passwd2": pw,
+                                              "active": "1", "protocols": ["smtp_access"]})
+        try:
+            with smtplib.SMTP(settings.SMTP_SUBMIT_HOST, 587, timeout=30) as s:
+                s.starttls(context=ssl.create_default_context())
+                s.login(address, pw)
+                return s.send_message(msg)
+        finally:
+            try:
+                ids = [a["id"] for a in (self._call("GET", f"get/app-passwd/all/{address}") or []) if isinstance(a, dict) and a.get("name") == name]
+                if ids:
+                    self._call("POST", "delete/app-passwd", ids)
+            except BackendError:
+                pass   # silinemezse yalnız SMTP yetkili, adı belli; posta_status/temizlik görür
+
+    def message_counts(self):
+        data = self._call("GET", "get/mailbox/all") or []
+        return {m["username"]: int(m.get("messages") or 0) for m in data if isinstance(m, dict) and m.get("username")}

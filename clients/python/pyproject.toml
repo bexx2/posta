@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "posta-sdk"
+version = "0.1.0"
+description = "Python client for posta: create real IMAP/SMTP mailboxes on your own domain with one API call."
+readme = "README.md"
+license = "AGPL-3.0-only"
+requires-python = ">=3.9"
+dependencies = ["requests>=2.28"]
+keywords = ["email", "mailbox", "imap", "smtp", "ai-agents", "api"]
+
+[project.urls]
+Homepage = "https://posta.preved.co"
+Documentation = "https://posta.preved.co/docs"
+Source = "https://github.com/bexx2/posta"
+
+[tool.setuptools]
+packages = ["posta"]

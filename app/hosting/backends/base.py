@@ -11,3 +11,5 @@ class MailBackend:
     def delete_mailbox(self, address: str) -> None: raise NotImplementedError
     def set_suspended(self, address: str, suspended: bool) -> None: raise NotImplementedError
     def set_domain_limits(self, domain: str, max_mailboxes: int, quota_mb: int) -> None: raise NotImplementedError
+    def submit(self, address: str, msg) -> dict: raise NotImplementedError   # kutunun KENDİSİ adına gönder (SMTP); dönüş: reddedilen alıcılar {adres: (kod, mesaj)}
+    def message_counts(self) -> dict: raise NotImplementedError   # {adres: kutudaki ileti sayısı} — içerik değil, yalnız sayı (#4)

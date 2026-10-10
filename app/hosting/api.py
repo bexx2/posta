@@ -49,7 +49,8 @@ def _mx():
 
 
 def mailbox_json(m: Mailbox):
-    return {"id": m.id, "address": m.address, "quota_mb": m.quota_mb, "status": m.status, "created_at": m.created_at}
+    return {"id": m.id, "address": m.address, "quota_mb": m.quota_mb, "status": m.status, "created_at": m.created_at,
+            "webhook": bool(m.webhook_url and not m.webhook_disabled_at)}
 
 
 class DomainList(APIView):
@@ -116,6 +117,46 @@ class MailboxDetail(APIView):
             raise services.ServiceError("not_found", "Mailbox not found.", 404)
         services.delete_mailbox(request.user, mb)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class MailboxWebhook(APIView):
+    """GET/PUT/DELETE /v1/mailboxes/{id}/webhook (#4). PUT {"url"} → {"url", "secret"}; secret yalnız bu yanıtta görünür."""
+    permission_classes = [Scope]
+    scopes = {"GET": "mailboxes:read", "PUT": "mailboxes:write", "DELETE": "mailboxes:write"}
+
+    def _mb(self, request, pk):
+        mb = Mailbox.objects.select_related("domain").filter(pk=pk, domain__owner=request.user).first()
+        if not mb:
+            raise services.ServiceError("not_found", "Mailbox not found.", 404)
+        return mb
+
+    def get(self, request, pk):
+        mb = self._mb(request, pk)
+        return Response({"url": mb.webhook_url or None, "active": bool(mb.webhook_url and not mb.webhook_disabled_at),
+                         "disabled_at": mb.webhook_disabled_at, "failures": mb.webhook_fails})
+
+    def put(self, request, pk):
+        mb = self._mb(request, pk)
+        secret = services.set_webhook(request.user, mb, str(request.data.get("url", "")))
+        return Response({"url": mb.webhook_url, "active": True, "secret": secret})
+
+    def delete(self, request, pk):
+        services.clear_webhook(request.user, self._mb(request, pk))
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class MailboxSend(APIView):
+    """POST /v1/mailboxes/{id}/send {"to", "subject", "text"|"html", "reply_to"?} → 202 {message_id, accepted, refused} (#7)."""
+    permission_classes = [Scope]
+    scopes = {"POST": "mail:send"}
+
+    def post(self, request, pk):
+        mb = Mailbox.objects.select_related("domain").filter(pk=pk, domain__owner=request.user).first()
+        if not mb:
+            raise services.ServiceError("not_found", "Mailbox not found.", 404)
+        d = request.data
+        out = services.send_message(request.user, mb, d.get("to"), d.get("subject", ""), d.get("text", ""), d.get("html", ""), d.get("reply_to", ""))
+        return Response(out, status=status.HTTP_202_ACCEPTED)
 
 
 class KeyList(APIView):

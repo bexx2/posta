@@ -55,7 +55,9 @@ class Membership(models.Model):
 class Domain(models.Model):
     PENDING, VERIFIED, SUSPENDED = "pending", "verified", "suspended"
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="domains")
-    name = models.CharField(max_length=253, unique=True)
+    # 2026-10-11: ad artık yalnız DOĞRULANMIŞ/askıdaki kayıtlar arasında tekil. Bekleyen talep adı kilitlemez (işgal: biri apple.com'u
+    # ekleyip bıraksa gerçek sahibi hiç ekleyemiyordu). Aynı adı birden çok hesap bekleyebilir; TXT'yi kanıtlayan ilk kişi alır.
+    name = models.CharField(max_length=253, db_index=True)
     status = models.CharField(max_length=12, default=PENDING,
                               choices=[(PENDING, "pending"), (VERIFIED, "verified"), (SUSPENDED, "suspended")])
     verification_token = models.CharField(max_length=64, blank=True, editable=False)
@@ -66,6 +68,12 @@ class Domain(models.Model):
     dkim_txt = models.TextField(blank=True)
     watch = models.JSONField(default=dict, blank=True)   # dns_watch: açık sorunlar (ilk görülme), gönderilen hatırlatmalar
     created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["name"], condition=~models.Q(status="pending"), name="uniq_claimed_domain_name"),
+            models.UniqueConstraint(fields=["owner", "name"], name="uniq_domain_per_owner"),
+        ]
 
     def save(self, *a, **kw):
         if not self.verification_token:
@@ -86,10 +94,17 @@ class Mailbox(models.Model):
     status = models.CharField(max_length=12, default=ACTIVE, choices=[(ACTIVE, "active"), (SUSPENDED, "suspended")])
     created_at = models.DateTimeField(default=timezone.now)
     plan_suspended_at = models.DateTimeField(null=True, blank=True)   # Pro bitince plan nedeniyle askıya alındı (yenilenirse geri açılır)
+    # Gelen posta webhook'u (#4): ileti İÇERİĞİ okunmaz; Mailcow'un kutu ileti sayısı artınca imzalı "message.received" POST'u gider.
+    webhook_url = models.URLField(max_length=500, blank=True)
+    webhook_secret = models.CharField(max_length=64, blank=True)
+    webhook_seen = models.IntegerField(null=True, blank=True)          # son görülen ileti sayısı
+    webhook_pending = models.PositiveIntegerField(default=0)            # bildirilmemiş yeni ileti
+    webhook_fails = models.PositiveIntegerField(default=0)
+    webhook_disabled_at = models.DateTimeField(null=True, blank=True)   # art arda başarısızlıktan sonra kapatıldı
 
 
 class ApiKey(models.Model):
-    SCOPES = ("domains:read", "domains:write", "mailboxes:read", "mailboxes:write")
+    SCOPES = ("domains:read", "domains:write", "mailboxes:read", "mailboxes:write", "mail:send")
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="api_keys")
     name = models.CharField(max_length=64)
     prefix = models.CharField(max_length=8, unique=True)

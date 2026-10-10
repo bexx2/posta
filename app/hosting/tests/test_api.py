@@ -60,6 +60,9 @@ class HostingFlow(APITestCase):
         self.assertEqual((r.status_code, r.json()["error"]["code"]), (403, "plan_limit"))
         other = session_client(make_user("other@example.com"))
         r = other.post("/v1/domains", {"name": "one.dev"}, format="json")
+        self.assertEqual(r.status_code, 201)                     # bekleyen talep adı kilitlemez (2026-10-11, işgal düzeltmesi)
+        Domain.objects.filter(name="one.dev", owner=self.user).update(status=Domain.VERIFIED)
+        r = session_client(make_user("third@example.com")).post("/v1/domains", {"name": "one.dev"}, format="json")
         self.assertEqual((r.status_code, r.json()["error"]["code"]), (409, "domain_taken"))
 
     def test_mailbox_needs_verified_domain(self):
@@ -200,3 +203,16 @@ class ApiUnauthenticatedStatus(__import__("rest_framework.test",fromlist=["APITe
 
     def test_bad_key_is_401(self):
         self.assertEqual(self.client.get("/v1/me", HTTP_AUTHORIZATION="Bearer kotu").status_code, 401)
+
+
+class RealIP(APITestCase):
+    def test_throttle_is_per_client_not_global(self):
+        """Caddy arkasında REMOTE_ADDR hep 127.0.0.1; kayıt sınırı (5/saat) X-Real-IP başına olmalı."""
+        from django.core.cache import cache
+        cache.clear()
+        def reg(ip, n):
+            return APIClient().post("/v1/auth/register", {"email": f"u{n}@example.com", "password": PW, "accept_terms": "x"},
+                                    format="json", REMOTE_ADDR="127.0.0.1", HTTP_X_REAL_IP=ip).status_code
+        codes_a = [reg("198.51.100.1", i) for i in range(6)]
+        self.assertEqual(codes_a[-1], 429)
+        self.assertNotEqual(reg("198.51.100.2", 99), 429)        # başka istemci etkilenmez

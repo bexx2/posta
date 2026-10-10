@@ -8,6 +8,8 @@ urlpatterns = [
     path("domains/<int:pk>/verify", api.DomainVerify.as_view()),
     path("mailboxes", api.MailboxList.as_view()),
     path("mailboxes/<int:pk>", api.MailboxDetail.as_view()),
+    path("mailboxes/<int:pk>/send", api.MailboxSend.as_view()),
+    path("mailboxes/<int:pk>/webhook", api.MailboxWebhook.as_view()),
     path("keys", api.KeyList.as_view()),
     path("keys/<int:pk>", api.KeyDetail.as_view()),
     path("usage", api.Usage.as_view()),

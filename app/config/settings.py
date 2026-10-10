@@ -34,6 +34,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    "config.middleware.RealIPMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -135,6 +136,7 @@ RESERVED_DOMAINS = ["heyvaql.com", "preved.co", "mailcow.local", "localhost"]
 RESERVED_DOMAIN_EXCEPTIONS = [d.strip().lower() for d in env("RESERVED_DOMAIN_EXCEPTIONS", "").split(",") if d.strip()]
 # Doğrulama için DNS beklentileri
 MX_TARGET = env("MX_TARGET", "mail.example.com")
+SMTP_SUBMIT_HOST = env("SMTP_SUBMIT_HOST", MX_TARGET)    # API gönderimi (#7) bu sunucunun 587 portuna kutu adına bağlanır
 SPF_INCLUDE_IP = env("SPF_INCLUDE_IP", "")          # gerçek çıkış IP'si (spf.posta.preved.co TXT'sinde yaşar)
 SPF_INCLUDE = env("SPF_INCLUDE", "spf.posta.preved.co")          # müşteriye verilen: include:… → IP değişince müşteri DNS'i değişmez
 VERIFY_TXT_PREFIX = "_posta-verify"
