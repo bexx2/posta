@@ -40,6 +40,9 @@ curl -s https://posta.preved.co/v1/mailboxes \
 ```
 Full API reference is coming. Until then the endpoints above are stable.
 
+Receive mail with Node.js over IMAP / Node.js ile IMAP üzerinden posta alma:
+[example and setup / örnek ve kurulum](docs/receive-node.md).
+
 ## Who it is for
 Developers shipping a new product, agencies setting up client domains, and people building AI agents that need their own email address.
 
