@@ -2,6 +2,11 @@
 {% block content %}
 <h1>More capacity</h1>
 <p class="lead">Free includes {{ plan.max_domains }} domain and {{ plan.max_mailboxes_per_domain }} mailbox. Anything beyond that is paid.</p>
+{% if offers %}
+<div class="card"><strong>More mailboxes, right now.</strong> <span class="muted">Pay by card and open them right away. No need to wait for us.</span>
+<p>{% for o in offers %}<a class="btn{% if not forloop.last %} ghost{% endif %}" href="{% url 'panel-billing' %}?plan={{ o.slug }}">{{ o.name }}: {{ o.max_mailboxes_per_domain }} mailboxes, ${{ o.price_usd_yearly }}/year</a> {% endfor %}</p></div>
+<p class="small muted">Need more than that, or another domain? Send a request below.</p>
+{% endif %}
 <div class="card"><strong>How it works.</strong> Tell us what you need. We write to you with the price. Nothing is charged, and nothing opens, until you approve the price.</div>
 <form method="post" class="card">{% csrf_token %}
 <label for="kind">I need more</label>

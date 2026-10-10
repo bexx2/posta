@@ -116,6 +116,8 @@ EMAIL_TIMEOUT = 15
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", "posta <noreply@example.com>")
 # Operatör bildirimi (yeni kayıt / domain doğrulandı / ilk kutu). Boşsa kapalı (testler). Canlı: .env NOTIFY_EMAIL=merhaba@preved.co
 NOTIFY_EMAIL = env("NOTIFY_EMAIL", "")
+# dns_watch müşteri hatırlatma maili (yarım kurulum / MX kaybı / DKIM eksik). Kapalıyken yalnız panel + operatör bildirimi. Açmak Bedran kararı.
+DNS_NUDGE_MAIL = env("DNS_NUDGE_MAIL", "0") == "1"
 
 # Message-ID alan adı: Django make_msgid socket.getfqdn() kullanır → sunucuda "localhost"
 # → rspamd MID_RHS_NOT_FQDN (spam sinyali). FQDN'i sabitle (HeyvAnka'daki fix'in aynısı).

@@ -13,7 +13,7 @@ from .models import TermsAcceptance, User
 
 VERIFY_SALT = "posta.verify-email"
 VERIFY_MAX_AGE = 3 * 24 * 3600
-TERMS_VERSION = "2026-10-08-2"          # == scripts/build-legal.py VERSION (test denetler); sürümlü sayfa: /terms/<VERSION>
+TERMS_VERSION = "2026-10-10"          # == scripts/build-legal.py VERSION (test denetler); sürümlü sayfa: /terms/<VERSION>
 RESET_SALT = "posta.reset-password"
 RESET_MAX_AGE = 3600
 REQUIRED_DOCS = ("terms", "aup")            # onay kutusu yalnız bunlar için (avukat 2026-10-08 §2.2)

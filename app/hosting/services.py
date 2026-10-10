@@ -4,9 +4,11 @@ import re
 
 import dns.exception
 import dns.resolver
+import tldextract
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from .backends import get_backend
@@ -16,6 +18,14 @@ from .models import ApiKey, AuditLog, Domain, Mailbox, Membership, normalize_dom
 log = logging.getLogger(__name__)
 LOCAL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9._+-]{0,62}[a-z0-9])?$")
 RESERVED_LOCALS = {"postmaster", "abuse", "hostmaster", "webmaster", "root", "admin", "administrator", "noreply", "no-reply", "mailer-daemon"}
+# suffix_list_urls=() → yalnız paketle gelen Public Suffix List anlık görüntüsü kullanılır, canlı ağ sorgusu YOK
+# (soğuk başlangıçta dışa bağımlılık istemiyoruz). Zaman zaman `pip install -U tldextract` ile tazelenebilir.
+_tld = tldextract.TLDExtract(suffix_list_urls=())
+
+
+def _apex(name: str) -> str:
+    """Kayıtlı kök domain (eTLD+1): mail1.evil.com → evil.com, foo.com.tr → foo.com.tr."""
+    return _tld(name).top_domain_under_public_suffix or name
 
 
 class ServiceError(Exception):
@@ -49,6 +59,14 @@ def add_domain(user, raw_name: str) -> Domain:
         raise ServiceError("plan_limit", f"Your plan allows {plan.max_domains} domain(s).", 403)
     if Domain.objects.filter(name=name).exists():
         raise ServiceError("domain_taken", "This domain is already registered on posta.", 409)
+    # Çoklu hesap + subdomain rotasyonu önlemi (2026-10-10): max_domains hesap başına, ama biri
+    # 10 farklı hesapla kendi domaininin altına a.evil.com, b.evil.com... eklerse her biri taze
+    # 1 kutu × daily_send_limit kazanır. Aynı kök domain (eTLD+1) BAŞKA bir hesapta zaten varsa reddet.
+    apex = _apex(name)
+    if Domain.objects.exclude(owner=user).exclude(status=Domain.SUSPENDED).filter(
+            Q(name=apex) | Q(name__iendswith="." + apex)).exists():
+        raise ServiceError("domain_taken",
+                            "A domain under this same root domain is already registered by another account.", 409)
     d = Domain.objects.create(owner=user, name=name)
     audit(user, "domain.add", "domain", name)
     return d
@@ -63,10 +81,13 @@ def _resolve(name, rtype):
         return []
 
 
-def check_dns(domain: Domain) -> dict:
-    """Ayrı ayrı sonuç döner. verified = sahiplik TXT + MX. SPF/DMARC/DKIM bilgilendirici (gönderim itibarı için gerekli)."""
+def check_dns(domain: Domain, found: dict | None = None) -> dict:
+    """Ayrı ayrı sonuç döner. verified = sahiplik TXT + MX. SPF/DMARC/DKIM bilgilendirici (gönderim itibarı için gerekli).
+    `found` verilirse (dict) bulunan GERÇEK değerler de doldurulur: panel "şunu bulduk, şu olmalı" diyebilsin diye."""
     txt = _resolve(domain.txt_record["name"], "TXT")
     mx = [m.split()[-1].rstrip(".").lower() for m in _resolve(domain.name, "MX")]
+    if found is not None:
+        found["ownership_txt"], found["mx"] = txt, mx
     spf = [t for t in _resolve(domain.name, "TXT") if t.lower().startswith("v=spf1")]
     dmarc = [t for t in _resolve(f"_dmarc.{domain.name}", "TXT") if t.lower().startswith("v=dmarc1")]
     dkim = _resolve(f"{domain.dkim_selector}._domainkey.{domain.name}", "TXT") if domain.dkim_txt else []
@@ -83,8 +104,9 @@ def check_dns(domain: Domain) -> dict:
 def verify_domain(user, domain: Domain) -> Domain:
     if domain.owner_id != user.id:
         raise ServiceError("not_found", "Domain not found.", 404)
-    res = check_dns(domain)
-    domain.last_check, domain.last_check_at = res, timezone.now()
+    found = {}
+    res = check_dns(domain, found)
+    domain.last_check, domain.last_check_at = ({**res, "_found": found} if found else res), timezone.now()
     if res["ownership_txt"] and res["mx"]:
         if domain.status != Domain.SUSPENDED:
             domain.status = Domain.VERIFIED
@@ -216,6 +238,21 @@ def pro_plan():
     return Plan.objects.filter(slug=PRO_SLUG, price_usd_yearly__isnull=False).first()
 
 
+SALE_SLUGS = ("starter", "pro")      # satışta olan ücretli planlar; metinler (build-legal.py) bunlarla aynı olmalı (test denetler)
+
+
+def paid_plans():
+    from .models import Plan
+    return list(Plan.objects.filter(slug__in=SALE_SLUGS, price_usd_yearly__isnull=False).order_by("price_usd_yearly"))
+
+
+def buyable_plans(current):
+    """Bu kullanıcının satın alabileceği planlar: mevcut planla aynı (yenileme) ya da daha çok kutu veren. Aktif Pro'ya Starter satılmaz
+    (activate yeni planı 'şimdi'den başlatır → kalan Pro süresi ve fazla kutular kaybolurdu)."""
+    cur = current.max_mailboxes_per_domain if current else 0
+    return [p for p in paid_plans() if current is None or p.pk == current.pk or p.max_mailboxes_per_domain > cur]
+
+
 def activate_pro(order):
     """Ödenmiş siparişi uygular: plan=pro, süre +365 gün (aktif Pro varsa bitişine eklenir), Mailcow alan adı limitleri yükselir. Idempotent çağıran: Order.status."""
     from datetime import timedelta
@@ -279,8 +316,9 @@ def send_receipt(order):
     from django.conf import settings as st
     until = order.user.membership.paid_until
     d14 = (order.paid_at + timedelta(days=14)).strftime("%Y-%m-%d")
-    body = f"""Thank you. Your posta Pro plan is active.
-- Plan: Pro - 1 domain, up to 10 mailboxes (500 MB and 50 outgoing messages a day each), 1 year
+    pl = order.plan
+    body = f"""Thank you. Your posta {pl.name} plan is active.
+- Plan: {pl.name} - {pl.max_domains} domain, up to {pl.max_mailboxes_per_domain} mailboxes ({pl.mailbox_quota_mb} MB and {pl.daily_send_limit} outgoing messages a day each), 1 year
 - Start: {order.paid_at:%Y-%m-%d} - Ends: {until:%Y-%m-%d} - No automatic renewal
 - Paid: USD {order.amount_usd} in total (no tax added on top), by card via iyzico - Order #{order.id}
 - Seller: HEYVANKA YAZILIM, Demirtas Mah. 77034 Sk. No: 11/A, Toroslar / Mersin, Turkiye - +90 850 840 43 37 - merhaba@preved.co
@@ -291,8 +329,8 @@ We will email your invoice within 7 days.
 
 -----
 
-Tesekkurler. posta Pro planin aktif.
-- Plan: Pro - 1 alan adi, en fazla 10 posta kutusu (her biri 500 MB ve gunde 50 giden ileti), 1 yil
+Tesekkurler. posta {pl.name} planin aktif.
+- Plan: {pl.name} - {pl.max_domains} alan adi, en fazla {pl.max_mailboxes_per_domain} posta kutusu (her biri {pl.mailbox_quota_mb} MB ve gunde {pl.daily_send_limit} giden ileti), 1 yil
 - Baslangic: {order.paid_at:%Y-%m-%d} - Bitis: {until:%Y-%m-%d} - Otomatik yenileme yok
 - Odenen: toplam {order.amount_usd} ABD dolari (uzerine vergi eklenmedi), iyzico ile kartla - Siparis no: {order.id}
 - Satici: HEYVANKA YAZILIM, Demirtas Mah. 77034 Sk. No: 11/A, Toroslar / Mersin - 0850 840 43 37 - merhaba@preved.co
@@ -301,7 +339,7 @@ Tesekkurler. posta Pro planin aktif.
 - Sikayet ve uyusmazlik: merhaba@preved.co; tuketiciysen tuketici hakem heyetine ya da arabuluculuktan sonra tuketici mahkemesine de basvurabilirsin.
 Faturani 7 gun icinde e-postayla gonderecegiz.
 """
-    send_mail(f"posta Pro: payment received - order #{order.id}", body, st.DEFAULT_FROM_EMAIL, [order.user.email], fail_silently=True)
+    send_mail(f"posta {pl.name}: payment received - order #{order.id}", body, st.DEFAULT_FROM_EMAIL, [order.user.email], fail_silently=True)
 
 
 def downgrade_to_free(user, reason="expired"):

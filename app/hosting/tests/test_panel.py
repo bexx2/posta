@@ -74,7 +74,7 @@ class PanelFlow(TestCase):
         self.assertContains(r, "agent@acme.dev is ready")
         self.assertEqual(Mailbox.objects.count(), 1)
         page = self.client.get(f"/app/domains/{d.pk}/")
-        self.assertContains(page, "Free plan includes 1 mailbox")
+        self.assertContains(page, "includes 1 mailbox")                 # ödeme açık/kapalı iki metinde de var
         self.assertNotContains(page, 'name="local"')                    # ikinci kutu formu yok
         r = self.client.post(f"/app/domains/{d.pk}/mailboxes/", {"local": "two", "password": PW}, follow=True)   # elle zorlama
         self.assertContains(r, "allows 1 mailbox")
@@ -223,3 +223,77 @@ class ReservedDomainTests(TestCase):
         self.assertEqual(_nd("Demo.preved.co"), "demo.preved.co")
         with self.assertRaises(_VE):
             _nd("other.preved.co")
+
+
+@override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend", MAIL_BACKEND="dryrun")
+class StuckPointFixes(TestCase):
+    """2026-10-10: gerçek kullanıcıların takıldığı yerler (yanlış MX host'u, tam adres olmayan kullanıcı adı, silme onayı)."""
+    def setUp(self):
+        cache.clear()
+        DryRunBackend.instance().reset()
+        self.u = User.objects.create_user(email="s@example.com", password=PW)
+        self.u.email_verified_at = timezone.now()
+        self.u.save()
+        self.client.post("/app/login/", {"email": "s@example.com", "password": PW})
+
+    def _verify_with(self, domain, records):
+        from django.conf import settings
+        with mock.patch("hosting.services._resolve", lambda name, rtype: records.get((name, rtype), [])):
+            self.client.post(f"/app/domains/{domain.pk}/verify/")
+        return self.client.get(f"/app/domains/{domain.pk}/")
+
+    def test_mx_pointing_to_website_host_is_named(self):
+        d = Domain.objects.create(owner=self.u, name="walvo.example")
+        r = self._verify_with(d, {("_posta-verify.walvo.example", "TXT"): [d.txt_record["value"]],
+                                  ("walvo.example", "MX"): ["10 posta.preved.co."]})
+        self.assertContains(r, "We found MX: posta.preved.co")
+        self.assertContains(r, "posta.preved.co is our website, not the mail server")
+        d.refresh_from_db()
+        self.assertEqual(d.status, Domain.PENDING)
+
+    def test_no_mx_found_is_said_plainly(self):
+        d = Domain.objects.create(owner=self.u, name="nomx.example")
+        r = self._verify_with(d, {("_posta-verify.nomx.example", "TXT"): [d.txt_record["value"]]})
+        self.assertContains(r, "We found no MX record for nomx.example")
+
+    def test_wrong_txt_value_is_shown(self):
+        d = Domain.objects.create(owner=self.u, name="wrongtxt.example")
+        r = self._verify_with(d, {("_posta-verify.wrongtxt.example", "TXT"): ["posta-verify=other-token"]})
+        self.assertContains(r, "with another value: posta-verify=other-token")
+
+    def test_api_hides_internal_found_values(self):
+        d = Domain.objects.create(owner=self.u, name="apihide.example")
+        self._verify_with(d, {("apihide.example", "MX"): ["10 mx.google.com."]})
+        d.refresh_from_db()
+        self.assertIn("_found", d.last_check)                       # panel için saklanıyor
+        from hosting.api import domain_json
+        self.assertNotIn("_found", domain_json(d)["last_check"])    # ama API yanıtına çıkmıyor
+
+    def _domain_with_box(self, name="boxes.example", local="bot"):
+        d = Domain.objects.create(owner=self.u, name=name, status=Domain.VERIFIED, verified_at=timezone.now())
+        from hosting import services
+        mb = services.create_mailbox(self.u, d, local, "a-strong-passw0rd-xyz")
+        return d, mb
+
+    def test_connect_card_shows_full_address_as_username(self):
+        d, mb = self._domain_with_box()
+        r = self.client.get(f"/app/domains/{d.pk}/")
+        self.assertContains(r, "Connect your mail app")
+        self.assertContains(r, "The user name is the full address")
+        self.assertContains(r, "bot@boxes.example")
+
+    def test_delete_confirm_accepts_local_part_or_full_address(self):
+        d, mb = self._domain_with_box()
+        r = self.client.post(f"/app/mailboxes/{mb.pk}/delete/", {"confirm": "nope"}, follow=True)
+        self.assertContains(r, "Type the mailbox name (bot) or the full address")
+        self.assertTrue(Mailbox.objects.filter(pk=mb.pk).exists())
+        self.client.post(f"/app/mailboxes/{mb.pk}/delete/", {"confirm": "  BOT "})       # yalnız yerel ad, büyük harf/boşluk toleransı
+        self.assertFalse(Mailbox.objects.filter(pk=mb.pk).exists())
+        d2, mb2 = self._domain_with_box(name="boxes2.example", local="agent")
+        self.client.post(f"/app/mailboxes/{mb2.pk}/delete/", {"confirm": "agent@boxes2.example"})
+        self.assertFalse(Mailbox.objects.filter(pk=mb2.pk).exists())
+
+    def test_password_rules_shown_on_form(self):
+        d = Domain.objects.create(owner=self.u, name="rules.example", status=Domain.VERIFIED, verified_at=timezone.now())
+        r = self.client.get(f"/app/domains/{d.pk}/")
+        self.assertContains(r, "not a common password, not only digits")

@@ -2,11 +2,14 @@
 {% block content %}
 <p class="small"><a href="{% url 'panel-home' %}">← Dashboard</a></p>
 <h1>{{ d.name }} {% if verified %}<span class="pill ok">verified</span>{% elif d.status == "suspended" %}<span class="pill">suspended</span>{% else %}<span class="pill wait">waiting for DNS</span>{% endif %}</h1>
+{% if verified and check.mx is False %}<div class="msg error" role="alert"><strong>Incoming mail is not reaching your mailboxes.</strong> Your MX record no longer points to {{ mx_target }}{% if found_mx %} (we see {{ found_mx|join:", " }}){% endif %}. Fix the MX row below; mail sent to {{ d.name }} meanwhile goes to the other server or bounces.</div>
+{% elif verified and check.dkim is False and boxes %}<div class="msg" role="status"><strong>One record left:</strong> add the DKIM record below so your mail is not marked as spam.</div>{% endif %}
+{% if not verified %}<p class="small muted">We check your DNS automatically every 15 minutes and open the domain as soon as the records are there.</p>{% endif %}
 
 <h2>1. DNS records</h2>
 <p class="muted small">Add these at the company that manages your DNS. The first two are required. The others protect your mail from being marked as spam.</p>
 {% if check %}<p class="small" role="status"><strong>{{ req_ok }} of {{ req_total }} required records found.</strong>
-{% if req_ok == req_total %}Ready. {% if not verified %}Press <em>Check DNS</em> to open your mailbox.{% endif %}{% else %}Fix the rows marked below, wait a few minutes, and check again.{% endif %}</p>{% endif %}
+{% if req_ok == req_total %}Ready. {% if not verified %}Press <em>Check DNS</em> to open your mailbox.{% endif %}{% else %}Fix the rows marked below, then check again. DNS changes usually show in minutes, sometimes in a few hours. You do not need to press the button again and again.{% endif %}</p>{% endif %}
 <div class="card">
 <table class="dns"><thead><tr><th>Type</th><th>Name</th><th>Value</th><th>Status</th></tr></thead><tbody>
 {% for r in rows %}<tr>
@@ -32,10 +35,19 @@
 {% for b in boxes %}
 <div class="card">
   <div class="row"><strong class="mono">{{ b.address }}</strong><span class="small muted">{{ b.quota_mb }} MB</span></div>
-  <p class="small" style="margin:8px 0 0">IMAP <code>{{ connect.host }}</code> port {{ connect.imap_port }} (SSL) · SMTP <code>{{ connect.host }}</code> port {{ connect.smtp_port }} (STARTTLS) · user name is the full address.</p>
+  <div style="margin:12px 0 4px"><strong class="small">Connect your mail app</strong>
+  <table class="dns"><tbody>
+  <tr><td class="small">Incoming (IMAP)</td><td><code>{{ connect.host }}</code></td><td class="small">port {{ connect.imap_port }} · SSL/TLS</td></tr>
+  <tr><td class="small">Outgoing (SMTP)</td><td><code>{{ connect.host }}</code></td><td class="small">port {{ connect.smtp_port }} · STARTTLS (or port 465 · SSL/TLS)</td></tr>
+  <tr><td class="small">User name</td><td colspan="2"><code>{{ b.address }}</code></td></tr>
+  <tr><td class="small">Password</td><td colspan="2" class="small muted">the one you set when you created this mailbox</td></tr>
+  </tbody></table>
+  <p class="small" style="margin:8px 0 0"><strong>The user name is the full address</strong>, not only <code>{{ b.local_part }}</code>. Many apps (Gmail “Send mail as”, phone mail apps) fill in only the part before the @. Replace it with <code>{{ b.address }}</code>, or sign-in fails.</p>
+  <details style="margin-top:6px"><summary class="small">Using Gmail?</summary>
+  <p class="small" style="margin:6px 0 0">Gmail → Settings → Accounts and Import → <em>Send mail as</em> → Add another email address. SMTP server <code>{{ connect.host }}</code>, port {{ connect.smtp_port }}, secured connection using TLS, user name <code>{{ b.address }}</code> and your mailbox password. To read this mailbox in Gmail, use <em>Check mail from other accounts</em> with the IMAP settings above.</p></details></div>
   <details style="margin-top:8px"><summary class="small">Delete this mailbox</summary>
     <form method="post" action="{% url 'panel-mailbox-delete' b.pk %}">{% csrf_token %}
-      <label for="del{{ b.pk }}" class="small">Type <code>{{ b.address }}</code>. The mailbox and all its mail are removed.</label>
+      <label for="del{{ b.pk }}" class="small">Type <code>{{ b.local_part }}</code> or <code>{{ b.address }}</code> to confirm. The mailbox and all its mail are removed.</label>
       <input id="del{{ b.pk }}" name="confirm" type="text" autocomplete="off" autocapitalize="none" required>
       <p><button class="btn danger" type="submit">Delete mailbox</button></p></form></details>
 </div>
@@ -43,6 +55,10 @@
 
 {% if not verified %}
   <div class="card muted">Mailboxes open after the domain is verified.</div>
+{% elif at_limit and offers %}
+  <div class="card"><strong>Your plan includes {{ plan.max_mailboxes_per_domain }} mailbox{{ plan.max_mailboxes_per_domain|pluralize:"es" }} per domain.</strong>
+  <span class="muted">Upgrade and open more mailboxes on this domain right after payment.</span>
+  <p>{% for o in offers %}<a class="btn{% if not forloop.last %} ghost{% endif %}" href="{% url 'panel-billing' %}?plan={{ o.slug }}">{{ o.name }}: {{ o.max_mailboxes_per_domain }} mailboxes, ${{ o.price_usd_yearly }}/year</a> {% endfor %}</p></div>
 {% elif at_limit %}
   <div class="card"><strong>Free plan includes {{ plan.max_mailboxes_per_domain }} mailbox{{ plan.max_mailboxes_per_domain|pluralize:"es" }} per domain.</strong>
   <span class="muted">Extra mailboxes are paid. <a href="{% url 'panel-upgrade' %}?kind=mailboxes">Ask for more mailboxes</a>. We reply with the price and open them only after you approve.</span></div>
@@ -50,7 +66,7 @@
 <form method="post" action="{% url 'panel-mailbox-create' d.pk %}" class="card">{% csrf_token %}
   <label for="local">Mailbox name</label>
   <div class="row" style="justify-content:flex-start;flex-wrap:nowrap;gap:6px"><input id="local" name="local" type="text" placeholder="agent" autocapitalize="none" autocomplete="off" required style="max-width:240px"><span class="mono">@{{ d.name }}</span></div>
-  <label for="password">Mailbox password <span class="muted small">(at least 10 characters)</span></label>
+  <label for="password">Mailbox password <span class="muted small">(at least 10 characters, not a common password, not only digits)</span></label>
   <input id="password" name="password" type="password" autocomplete="new-password" required minlength="10">
   <p class="small muted">We cannot show this password later. Save it in your password manager.</p>
   <p><button class="btn" type="submit">Create mailbox</button></p>

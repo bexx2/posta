@@ -8,7 +8,7 @@
 <div class="card row">
   <div><a href="{% url 'panel-domain' d.pk %}"><strong>{{ d.name }}</strong></a><br>
   <span class="small muted">{{ d.mailboxes.count }} of {{ plan.max_mailboxes_per_domain }} mailbox{{ plan.max_mailboxes_per_domain|pluralize:"es" }}</span></div>
-  {% if d.status == "verified" %}<span class="pill ok">verified</span>{% elif d.status == "suspended" %}<span class="pill">suspended</span>{% else %}<span class="pill wait">waiting for DNS</span>{% endif %}
+  {% if d.status == "verified" and d.last_check.mx is False %}<span class="pill err">MX missing</span>{% elif d.status == "verified" %}<span class="pill ok">verified</span>{% elif d.status == "suspended" %}<span class="pill">suspended</span>{% else %}<span class="pill wait">waiting for DNS</span>{% endif %}
 </div>
 {% empty %}
 <div class="card"><p style="margin:0">No domain yet. Add the domain you own to start.</p></div>
@@ -21,7 +21,13 @@
   <p class="small muted" style="margin:8px 0 0">You will get DNS records to set. We open mailboxes only after we see them.</p>
 </form>
 {% else %}
+{% if offers %}
+<div class="card"><strong>Need more mailboxes?</strong> <span class="muted">Upgrade and open them right after payment.</span>
+<p>{% for o in offers %}<a class="btn{% if not forloop.last %} ghost{% endif %}" href="{% url 'panel-billing' %}?plan={{ o.slug }}">{{ o.name }}: {{ o.max_mailboxes_per_domain }} mailboxes, ${{ o.price_usd_yearly }}/year</a> {% endfor %}</p>
+<p class="small muted" style="margin:0">Need another domain? <a href="{% url 'panel-upgrade' %}?kind=domains">Ask for more capacity</a>.</p></div>
+{% else %}
 <div class="card"><strong>Free plan limit reached.</strong> <span class="muted">Need more domains or mailboxes? They are paid. <a href="{% url 'panel-upgrade' %}">Ask for more capacity</a>.</span></div>
+{% endif %}
 {% endif %}
 {% if open_requests %}<p class="small muted">You have {{ open_requests }} open capacity request{{ open_requests|pluralize }}. We will write to you.</p>{% endif %}
 {% endblock %}

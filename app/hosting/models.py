@@ -64,6 +64,7 @@ class Domain(models.Model):
     last_check = models.JSONField(default=dict, blank=True)
     dkim_selector = models.CharField(max_length=32, default="posta")
     dkim_txt = models.TextField(blank=True)
+    watch = models.JSONField(default=dict, blank=True)   # dns_watch: açık sorunlar (ilk görülme), gönderilen hatırlatmalar
     created_at = models.DateTimeField(default=timezone.now)
 
     def save(self, *a, **kw):

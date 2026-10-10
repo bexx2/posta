@@ -40,7 +40,7 @@ def domain_json(d: Domain):
     return {"id": d.id, "name": d.name, "status": d.status, "verified_at": d.verified_at, "created_at": d.created_at,
             "dns": {"ownership_txt": d.txt_record, "mx": {"name": d.name, "type": "MX", "value": f"10 {_mx()}"},
                     "dkim": ({"name": f"{d.dkim_selector}._domainkey.{d.name}", "type": "TXT", "value": d.dkim_txt} if d.dkim_txt else None)},
-            "last_check": d.last_check, "last_check_at": d.last_check_at}
+            "last_check": {k: v for k, v in (d.last_check or {}).items() if not k.startswith("_")}, "last_check_at": d.last_check_at}
 
 
 def _mx():

@@ -64,3 +64,33 @@ def notify_domain(sender, instance, created, **kw):
 def notify_mailbox(sender, instance, created, **kw):
     if created:
         _notify("kutu oluşturuldu", f"{instance.domain.owner.email} bir kutu oluşturdu (alan adı: {instance.domain.name}).")
+
+
+# ── Müşteriye hoş geldin + kısa veri toplama sorusu (2026-10-10, Bedran) ─────────────────────
+# Her yeni kutuya otomatik gider (bize değil, kutunun KENDİSİNE). Amaç: kim/ne için/ne kadar
+# hacim ihtiyacı — kapasite planlaması. Sistematik olduğu için kişisel imza (bexx) değil,
+# "posta team" — her kutuya aynı mail gittiği için dürüst olan budur.
+def _welcome(to_address):
+    subject = "Welcome to posta — a quick question"
+    body = ("Hi,\n\n"
+            "Your mailbox is ready. One quick thing: it helps us plan capacity if we know a bit "
+            "about how you'll use it.\n\n"
+            "- What will you be using this mailbox for?\n"
+            "- Roughly how many emails per day do you expect to send?\n"
+            "- Do you think you'll need more than one mailbox or domain?\n\n"
+            "No pressure to answer, just reply if you feel like it.\n\n"
+            "- posta team\n")
+    def _send():
+        try:
+            from django.core.mail import EmailMessage
+            EmailMessage(subject, body, settings.DEFAULT_FROM_EMAIL, [to_address],
+                         reply_to=["merhaba@preved.co"]).send(fail_silently=True)
+        except Exception:
+            _log.exception("welcome mail failed")
+    transaction.on_commit(_send)
+
+
+@receiver(post_save, sender=Mailbox)
+def welcome_mailbox_owner(sender, instance, created, **kw):
+    if created:
+        _welcome(instance.address)

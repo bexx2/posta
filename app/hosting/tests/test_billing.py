@@ -36,7 +36,7 @@ class BillingFlow(TestCase):
         self.user = User.objects.create_user(email="dev@example.com", password=PW, email_verified_at=timezone.now())
         self.c = Client()
         self.c.force_login(self.user)
-        self.form = {"name": "Ada Lovelace", "country": "UK", "address": "1 Test St", "accept": "on", "buyer_type": "business"}
+        self.form = {"name": "Ada Lovelace", "country": "UK", "address": "1 Test St", "accept": "on", "buyer_type": "business", "plan": "pro"}
 
     def start(self):
         init = {"status": "success", "token": "tok-1", "conversationId": None, "paymentPageUrl": "https://pay.example/x"}
@@ -188,3 +188,68 @@ class Lifecycle(TestCase):
         call_command("pro_lifecycle")
         m.refresh_from_db()
         self.assertEqual(m.plan.slug, "pro")
+
+
+@override_settings(**CFG)
+class UpsellRouting(TestCase):
+    """Ödeme açıkken kutu limiti dolan kullanıcı talep formuna değil Pro ödemesine yönlenir (2026-10-10: ilk alıcı forma düşmüştü)."""
+    def setUp(self):
+        DryRunBackend.instance().reset()
+        self.user = User.objects.create_user(email="dev@example.com", password=PW, email_verified_at=timezone.now())
+        self.c = Client()
+        self.c.force_login(self.user)
+        self.d = Domain.objects.create(owner=self.user, name="example.org", status=Domain.VERIFIED)
+        self.d.mailboxes.create(local_part="a", address="a@example.org", quota_mb=500)
+
+    def test_limit_points_to_billing(self):
+        for url in (f"/app/domains/{self.d.pk}/", "/app/", "/app/upgrade/"):
+            r = self.c.get(url)
+            self.assertContains(r, 'href="/app/billing/?plan=starter"', msg_prefix=url)
+            self.assertContains(r, 'href="/app/billing/?plan=pro"', msg_prefix=url)
+        self.assertNotContains(self.c.get(f"/app/domains/{self.d.pk}/"), "Ask for more mailboxes")
+
+    @override_settings(PAYMENTS_ENABLED=False)
+    def test_payments_off_keeps_request_form(self):
+        self.assertContains(self.c.get(f"/app/domains/{self.d.pk}/"), "Ask for more mailboxes")
+
+
+@override_settings(**CFG)
+class StarterPlan(TestCase):
+    def setUp(self):
+        from django.core.cache import cache
+        cache.clear()   # billing denemesi kısıtı (10) testler arası paylaşılan önbellekte birikir
+        DryRunBackend.instance().reset()
+        self.user = User.objects.create_user(email="dev@example.com", password=PW, email_verified_at=timezone.now())
+        self.c = Client()
+        self.c.force_login(self.user)
+        self.form = {"name": "Ada Lovelace", "country": "UK", "address": "1 Test St", "accept": "on", "buyer_type": "business", "plan": "starter"}
+
+    def _init(self, payload):
+        self.payload = payload
+        return {"status": "success", "token": "tok-s", "conversationId": payload["conversationId"],
+                "paymentPageUrl": "https://pay.example/s", "signature": sign([payload["conversationId"], "tok-s"])}
+
+    def test_starter_checkout_charges_50(self):
+        with mock.patch.object(iyzico, "initialize", side_effect=self._init):
+            r = self.c.post("/app/billing/", self.form)
+        self.assertEqual(r.status_code, 302)
+        o = Order.objects.get()
+        self.assertEqual((o.plan.slug, o.amount_usd), ("starter", Decimal("50")))
+        self.assertEqual(self.payload["price"], "50.0")
+        self.assertIn("Starter", self.payload["basketItems"][0]["name"])
+
+    def test_active_pro_cannot_buy_starter(self):
+        from datetime import timedelta
+        from hosting import services
+        m = services.membership(self.user)
+        m.plan, m.paid_until = Plan.objects.get(slug="pro"), timezone.now() + timedelta(days=100)
+        m.save()
+        with mock.patch.object(iyzico, "initialize", side_effect=self._init):
+            self.c.post("/app/billing/", self.form)
+        self.assertEqual(Order.objects.count(), 0)
+        page = self.c.get("/app/billing/")
+        self.assertNotContains(page, 'value="starter"')
+        self.assertContains(page, 'value="pro"')
+
+    def test_choice_preselected_from_link(self):
+        self.assertContains(self.c.get("/app/billing/?plan=starter"), 'value="starter" required checked')
